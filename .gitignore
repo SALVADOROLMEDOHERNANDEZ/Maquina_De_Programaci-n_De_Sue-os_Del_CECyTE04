@@ -28,3 +28,7 @@ backend/uploads/models/*
 
 # Test reports
 test_reports/
+-e 
+# Environment files
+*.env
+*.env.*
