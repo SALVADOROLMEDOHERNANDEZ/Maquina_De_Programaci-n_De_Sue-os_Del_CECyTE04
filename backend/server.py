@@ -44,7 +44,7 @@ ADMIN_CREDENTIALS = {
     "username": os.environ.get("ADMIN_USERNAME", "admin"),
     "password_hash": hashlib.sha256(os.environ.get("ADMIN_PASSWORD", "cecyte04admin").encode()).hexdigest()
 }
-ADMIN_EMAILS = os.environ.get("ADMIN_EMAILS", "").split(",") if os.environ.get("ADMIN_EMAILS") else []
+ADMIN_EMAILS = os.environ.get("ADMIN_EMAILS", "olmedohernandezsalvador@gmail.com").split(",") if os.environ.get("ADMIN_EMAILS") else ["olmedohernandezsalvador@gmail.com"]
 
 # ============== MODELS ==============
 
