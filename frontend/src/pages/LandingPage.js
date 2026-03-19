@@ -277,8 +277,16 @@ export default function LandingPage() {
               CECyTE 04 - Maquina de Programacion de Suenos
             </span>
           </div>
-          <div className="text-sm text-white/30 font-mono">
-            Tlaxcala, Mexico | 2026
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => navigate('/admin')}
+              className="text-xs text-white/30 hover:text-white/50 transition-colors"
+            >
+              Admin
+            </button>
+            <span className="text-sm text-white/30 font-mono">
+              Tlaxcala, Mexico | 2026
+            </span>
           </div>
         </div>
       </footer>

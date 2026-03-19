@@ -13,7 +13,8 @@ import {
   ArrowRight,
   GraduationCap,
   Image,
-  Clock
+  Clock,
+  Shield
 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
@@ -125,6 +126,17 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-4">
+            {user.is_admin && (
+              <Button
+                variant="ghost"
+                onClick={() => navigate('/admin')}
+                className="text-[#7c3aed] hover:text-[#7c3aed] hover:bg-[#7c3aed]/10"
+                data-testid="admin-panel-btn"
+              >
+                <Shield className="w-4 h-4 mr-2" />
+                Admin
+              </Button>
+            )}
             <div className="flex items-center gap-3">
               <Avatar className="w-10 h-10 border-2 border-[#00f0ff]/30">
                 <AvatarImage src={user.picture} alt={user.name} />
