@@ -1,10 +1,10 @@
-import React, { useState, useRef, useEffect, Suspense, useMemo, useCallback } from 'react';
-import { Canvas, useFrame, useThree, extend } from '@react-three/fiber';
+import React, { useState, useRef, useEffect, Suspense, useMemo } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, Stars, useGLTF, Environment } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { 
   ArrowLeft, 
   Info, 
@@ -16,74 +16,12 @@ import {
   Heart,
   MapPin,
   RotateCcw,
-  User
+  User,
+  Loader2,
+  Box
 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
-
-// Extend OrbitControls
-extend({ OrbitControls });
-
-// Custom OrbitControls component
-function CameraControls() {
-  const { camera, gl } = useThree();
-  const controlsRef = useRef();
-  
-  useFrame(() => {
-    if (controlsRef.current) {
-      controlsRef.current.update();
-    }
-  });
-  
-  return (
-    <orbitControls
-      ref={controlsRef}
-      args={[camera, gl.domElement]}
-      enableDamping
-      dampingFactor={0.05}
-      minDistance={10}
-      maxDistance={100}
-      maxPolarAngle={Math.PI / 2.1}
-      autoRotate
-      autoRotateSpeed={0.2}
-    />
-  );
-}
-
-// Stars component (pure Three.js)
-function Stars() {
-  const starsRef = useRef();
-  
-  const positions = useMemo(() => {
-    const pos = new Float32Array(3000 * 3);
-    for (let i = 0; i < 3000; i++) {
-      pos[i * 3] = (Math.random() - 0.5) * 400;
-      pos[i * 3 + 1] = (Math.random() - 0.5) * 400;
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 400;
-    }
-    return pos;
-  }, []);
-  
-  useFrame(() => {
-    if (starsRef.current) {
-      starsRef.current.rotation.y += 0.0001;
-    }
-  });
-  
-  return (
-    <points ref={starsRef}>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          count={3000}
-          array={positions}
-          itemSize={3}
-        />
-      </bufferGeometry>
-      <pointsMaterial size={0.5} color="#ffffff" transparent opacity={0.6} sizeAttenuation />
-    </points>
-  );
-}
 
 // Tarjeta 3D de Especialidad
 function SpecialtyCard3D({ especialidad, position, isSelected, onSelect }) {
@@ -113,7 +51,6 @@ function SpecialtyCard3D({ especialidad, position, isSelected, onSelect }) {
       onPointerOut={() => { setHovered(false); document.body.style.cursor = 'default'; }}
       scale={[scale, scale, scale]}
     >
-      {/* Panel principal */}
       <mesh>
         <boxGeometry args={[3.5, 4.5, 0.3]} />
         <meshStandardMaterial 
@@ -127,13 +64,11 @@ function SpecialtyCard3D({ especialidad, position, isSelected, onSelect }) {
         />
       </mesh>
       
-      {/* Borde wireframe */}
       <mesh scale={[1.03, 1.03, 1]}>
         <boxGeometry args={[3.5, 4.5, 0.2]} />
         <meshBasicMaterial color={color} wireframe transparent opacity={0.5} />
       </mesh>
       
-      {/* Esfera indicadora */}
       <mesh ref={glowRef} position={[0, 3, 0]}>
         <sphereGeometry args={[0.4, 20, 20]} />
         <meshStandardMaterial 
@@ -143,7 +78,6 @@ function SpecialtyCard3D({ especialidad, position, isSelected, onSelect }) {
         />
       </mesh>
       
-      {/* Beam de luz */}
       {(hovered || isSelected) && (
         <mesh position={[0, 6, 0]}>
           <cylinderGeometry args={[0.04, 0.04, 6, 8]} />
@@ -166,19 +100,14 @@ function Avatar({ position, color }) {
 
   return (
     <group ref={groupRef} position={position}>
-      {/* Cuerpo */}
       <mesh position={[0, 0.65, 0]}>
         <capsuleGeometry args={[0.35, 0.7, 10, 18]} />
         <meshStandardMaterial color={color} roughness={0.5} metalness={0.3} />
       </mesh>
-      
-      {/* Cabeza */}
       <mesh position={[0, 1.45, 0]}>
         <sphereGeometry args={[0.3, 18, 18]} />
         <meshStandardMaterial color="#FFDFC4" roughness={0.8} />
       </mesh>
-      
-      {/* Ojos */}
       <mesh position={[-0.1, 1.5, 0.25]}>
         <sphereGeometry args={[0.05, 10, 10]} />
         <meshBasicMaterial color="#222" />
@@ -223,7 +152,7 @@ function CentralMonument() {
   );
 }
 
-// Ground
+// Ground grid
 function Ground() {
   return (
     <group>
@@ -236,8 +165,38 @@ function Ground() {
   );
 }
 
+// Loaded 3D Model from admin upload
+function LoadedModel({ url }) {
+  const { scene } = useGLTF(url);
+  const clonedScene = useMemo(() => scene.clone(), [scene]);
+  
+  useEffect(() => {
+    // Auto-calculate bounding box and center the model
+    const box = new THREE.Box3().setFromObject(clonedScene);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    
+    // Center the model on the ground
+    clonedScene.position.x = -center.x;
+    clonedScene.position.z = -center.z;
+    clonedScene.position.y = -box.min.y; // Place on ground
+    
+    // Scale if too large or too small
+    const maxDim = Math.max(size.x, size.y, size.z);
+    if (maxDim > 60) {
+      const scaleFactor = 60 / maxDim;
+      clonedScene.scale.setScalar(scaleFactor);
+    } else if (maxDim < 10) {
+      const scaleFactor = 30 / maxDim;
+      clonedScene.scale.setScalar(scaleFactor);
+    }
+  }, [clonedScene]);
+
+  return <primitive object={clonedScene} />;
+}
+
 // Escena principal
-function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions }) {
+function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrl }) {
   const defaultPositions = useMemo(() => [
     { x: -20, y: 2, z: 14 },
     { x: 20, y: 2, z: 14 },
@@ -257,11 +216,18 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
       <pointLight position={[45, 30, 30]} intensity={1} color="#ccff00" />
       <pointLight position={[0, 30, -45]} intensity={1} color="#7c3aed" />
       
-      <Stars />
-      <Ground />
-      <CentralMonument />
+      <Stars radius={200} depth={60} count={3000} factor={4} saturation={0} fade speed={1} />
       
-      {/* Tarjetas */}
+      <Ground />
+      
+      {activeModelUrl ? (
+        <Suspense fallback={null}>
+          <LoadedModel url={activeModelUrl} />
+        </Suspense>
+      ) : (
+        <CentralMonument />
+      )}
+      
       {especialidades.map((esp, index) => {
         const savedPos = tarjetaPositions.find(p => p.especialidad_id === esp.especialidad_id);
         const pos = savedPos?.position || defaultPositions[index] || { x: 0, y: 2, z: 0 };
@@ -277,10 +243,17 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
         );
       })}
       
-      {/* Avatar */}
       <Avatar position={[0, 0, 10]} color="#1E3A5F" />
       
-      <CameraControls />
+      <OrbitControls
+        enableDamping
+        dampingFactor={0.05}
+        minDistance={10}
+        maxDistance={100}
+        maxPolarAngle={Math.PI / 2.1}
+        autoRotate
+        autoRotateSpeed={0.2}
+      />
     </>
   );
 }
@@ -301,8 +274,9 @@ function InfoPanel({ especialidad, onClose }) {
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 50 }}
       className="absolute top-20 right-4 w-80 glass-card rounded-2xl p-6 z-40"
+      data-testid="info-panel"
     >
-      <button onClick={onClose} className="absolute top-4 right-4 p-1 hover:bg-white/10 rounded-full">
+      <button onClick={onClose} className="absolute top-4 right-4 p-1 hover:bg-white/10 rounded-full" data-testid="info-panel-close">
         <X className="w-5 h-5 text-white/50" />
       </button>
 
@@ -356,17 +330,28 @@ export default function VirtualTour() {
   const [loading, setLoading] = useState(true);
   const [tarjetaPositions, setTarjetaPositions] = useState([]);
   const [userName, setUserName] = useState('Visitante');
+  const [activeModelUrl, setActiveModelUrl] = useState(null);
+  const [modelLoading, setModelLoading] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [espRes, posRes] = await Promise.all([
+        const [espRes, posRes, modelRes] = await Promise.all([
           fetch(`${API_URL}/api/especialidades`),
-          fetch(`${API_URL}/api/tarjetas/positions`)
+          fetch(`${API_URL}/api/tarjetas/positions`),
+          fetch(`${API_URL}/api/models/active`)
         ]);
         
         if (espRes.ok) setEspecialidades(await espRes.json());
         if (posRes.ok) setTarjetaPositions(await posRes.json());
+        
+        if (modelRes.ok) {
+          const modelData = await modelRes.json();
+          if (modelData && modelData.filename) {
+            setActiveModelUrl(`${API_URL}/api/models/file/${modelData.filename}`);
+            setModelLoading(true);
+          }
+        }
         
         try {
           const userRes = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
@@ -393,12 +378,13 @@ export default function VirtualTour() {
   const selectedEsp = especialidades.find(e => e.especialidad_id === selectedEspecialidad);
 
   return (
-    <div className="h-screen bg-[#020408] relative overflow-hidden">
+    <div className="h-screen bg-[#020408] relative overflow-hidden" data-testid="virtual-tour">
       {/* Navigation */}
       <nav className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4">
         <button 
           onClick={() => navigate(-1)}
           className="flex items-center gap-2 text-white/70 hover:text-white transition-colors glass px-4 py-2 rounded-full"
+          data-testid="tour-back-btn"
         >
           <ArrowLeft className="w-5 h-5" />
           Volver
@@ -413,44 +399,60 @@ export default function VirtualTour() {
         <button 
           onClick={() => setSelectedEspecialidad(null)}
           className="glass p-2 rounded-full hover:bg-white/10 transition-colors"
+          data-testid="tour-reset-btn"
         >
           <RotateCcw className="w-5 h-5 text-white/70" />
         </button>
       </nav>
 
       {/* 3D Canvas */}
-      <div className="w-full h-full">
+      <div className="w-full h-full" data-testid="tour-canvas-container">
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <div className="spinner-cyber mb-4" />
+              <Loader2 className="w-10 h-10 animate-spin text-[#00f0ff] mx-auto mb-4" />
               <p className="text-white/50">Cargando Tour Virtual...</p>
             </div>
           </div>
         ) : (
-          <Canvas camera={{ position: [30, 22, 30], fov: 50 }}>
-            <Scene 
-              especialidades={especialidades}
-              selectedEspecialidad={selectedEspecialidad}
-              onSelectEspecialidad={handleSelectEspecialidad}
-              tarjetaPositions={tarjetaPositions}
-            />
+          <Canvas 
+            camera={{ position: [30, 22, 30], fov: 50 }}
+            gl={{ antialias: true, alpha: false }}
+            onCreated={() => setModelLoading(false)}
+          >
+            <Suspense fallback={null}>
+              <Scene 
+                especialidades={especialidades}
+                selectedEspecialidad={selectedEspecialidad}
+                onSelectEspecialidad={handleSelectEspecialidad}
+                tarjetaPositions={tarjetaPositions}
+                activeModelUrl={activeModelUrl}
+              />
+            </Suspense>
           </Canvas>
         )}
       </div>
+
+      {/* Model loading indicator */}
+      {modelLoading && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 glass px-4 py-2 rounded-xl flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-[#00f0ff]" />
+          <span className="text-white/70 text-sm">Cargando modelo 3D...</span>
+        </div>
+      )}
 
       {/* Info Panel */}
       <AnimatePresence>
         {selectedEsp && <InfoPanel especialidad={selectedEsp} onClose={() => setSelectedEspecialidad(null)} />}
       </AnimatePresence>
 
-      {/* Controls */}
-      <div className="absolute bottom-4 left-4 glass px-4 py-3 rounded-xl text-sm text-white/50">
-        <p>🖱️ Arrastra para rotar | Scroll para zoom | Click en tarjeta</p>
+      {/* Controls help */}
+      <div className="absolute bottom-4 left-4 glass px-4 py-3 rounded-xl text-sm text-white/50" data-testid="tour-controls-help">
+        <p>Arrastra para rotar | Scroll para zoom | Click en tarjeta</p>
       </div>
 
       {/* Legend */}
-      <div className="absolute bottom-4 right-4 glass px-4 py-3 rounded-xl">
+      <div className="absolute bottom-4 right-4 glass px-4 py-3 rounded-xl" data-testid="tour-legend">
         <p className="text-xs text-white/50 mb-2">Especialidades:</p>
         <div className="flex flex-wrap gap-2 max-w-xs">
           {especialidades.map((esp) => (
@@ -459,6 +461,7 @@ export default function VirtualTour() {
               onClick={() => handleSelectEspecialidad(esp.especialidad_id)}
               className={`px-2 py-1 rounded-full text-xs transition-all ${selectedEspecialidad === esp.especialidad_id ? 'scale-110 ring-1' : ''}`}
               style={{ backgroundColor: `${esp.color}20`, color: esp.color }}
+              data-testid={`legend-${esp.especialidad_id}`}
             >
               {esp.nombre}
             </button>
@@ -466,8 +469,16 @@ export default function VirtualTour() {
         </div>
       </div>
 
+      {/* Active model indicator */}
+      {activeModelUrl && (
+        <div className="absolute top-20 left-4 glass px-4 py-2 rounded-xl flex items-center gap-2">
+          <Box className="w-4 h-4 text-[#ccff00]" />
+          <span className="text-white/70 text-sm">Modelo del plantel cargado</span>
+        </div>
+      )}
+
       {/* User */}
-      <div className="absolute top-20 left-4 glass px-4 py-2 rounded-xl flex items-center gap-2">
+      <div className="absolute top-20 right-4 glass px-4 py-2 rounded-xl flex items-center gap-2" data-testid="tour-user-info">
         <User className="w-4 h-4 text-[#00f0ff]" />
         <span className="text-white text-sm">{userName}</span>
       </div>
