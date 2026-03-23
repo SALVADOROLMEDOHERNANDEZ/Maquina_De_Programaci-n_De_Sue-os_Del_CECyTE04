@@ -133,10 +133,19 @@ export default function AdminPanel() {
     const file = e.target.files[0];
     if (file) {
       const validExtensions = ['.gltf', '.glb', '.fbx', '.obj'];
-      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+      const fileName = file.name.toLowerCase();
+      const ext = fileName.substring(fileName.lastIndexOf('.'));
       
       if (!validExtensions.includes(ext)) {
         toast.error('Formato no válido. Use: GLTF, GLB, FBX u OBJ');
+        e.target.value = ''; // Reset input
+        return;
+      }
+      
+      // Check file size (max 100MB)
+      if (file.size > 100 * 1024 * 1024) {
+        toast.error('El archivo es demasiado grande. Máximo 100MB');
+        e.target.value = '';
         return;
       }
       
@@ -144,6 +153,7 @@ export default function AdminPanel() {
       if (!modelName) {
         setModelName(file.name.replace(/\.[^/.]+$/, ''));
       }
+      toast.success(`Archivo seleccionado: ${file.name}`);
     }
   };
 
@@ -408,21 +418,32 @@ export default function AdminPanel() {
                   />
                 </div>
                 <div>
-                  <Label className="text-white/70">Archivo 3D</Label>
-                  <div className="relative">
-                    <input
-                      type="file"
-                      accept=".gltf,.glb,.fbx,.obj"
-                      onChange={handleFileSelect}
-                      className="absolute inset-0 opacity-0 cursor-pointer"
-                    />
-                    <div className="input-cyber h-10 flex items-center px-3">
-                      {selectedFile ? (
-                        <span className="text-[#00f0ff] truncate">{selectedFile.name}</span>
-                      ) : (
-                        <span className="text-white/40">Seleccionar archivo...</span>
-                      )}
-                    </div>
+                  <Label className="text-white/70">Archivo 3D (GLTF, GLB, FBX, OBJ)</Label>
+                  <div className="mt-2">
+                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-xl cursor-pointer hover:border-[#00f0ff]/50 hover:bg-[#00f0ff]/5 transition-all">
+                      <input
+                        type="file"
+                        accept=".gltf,.glb,.fbx,.obj"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                        id="model-file-input"
+                      />
+                      <div className="flex flex-col items-center justify-center py-4">
+                        {selectedFile ? (
+                          <>
+                            <Box className="w-10 h-10 text-[#00f0ff] mb-2" />
+                            <p className="text-[#00f0ff] font-medium">{selectedFile.name}</p>
+                            <p className="text-white/40 text-sm">{(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-10 h-10 text-white/40 mb-2" />
+                            <p className="text-white/60">Haz clic para seleccionar archivo</p>
+                            <p className="text-white/40 text-sm">o arrastra y suelta aquí</p>
+                          </>
+                        )}
+                      </div>
+                    </label>
                   </div>
                 </div>
               </div>

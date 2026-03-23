@@ -621,7 +621,8 @@ async def upload_3d_model(
     
     # Validate file extension
     allowed_extensions = ['.gltf', '.glb', '.fbx', '.obj']
-    file_ext = Path(file.filename).suffix.lower()
+    original_filename = file.filename or "model"
+    file_ext = Path(original_filename).suffix.lower()
     
     if file_ext not in allowed_extensions:
         raise HTTPException(status_code=400, detail=f"Invalid file format. Allowed: {', '.join(allowed_extensions)}")
@@ -633,29 +634,43 @@ async def upload_3d_model(
     
     # Save file
     try:
-        async with aiofiles.open(file_path, 'wb') as out_file:
-            content = await file.read()
-            await out_file.write(content)
-        
+        content = await file.read()
         file_size = len(content)
+        
+        # Check file size (max 100MB)
+        if file_size > 100 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large. Maximum 100MB")
+        
+        async with aiofiles.open(file_path, 'wb') as out_file:
+            await out_file.write(content)
         
         # Save model info to database
         model_doc = {
             "model_id": model_id,
             "nombre": nombre,
             "filename": filename,
-            "original_filename": file.filename,
+            "original_filename": original_filename,
             "format": file_ext[1:],  # Remove the dot
             "file_size": file_size,
             "is_active": False,
+            "bounds": None,  # Will be calculated by frontend
             "uploaded_by": admin.get("username", admin.get("email", "admin")),
             "uploaded_at": datetime.now(timezone.utc).isoformat()
         }
         
         await db.models_3d.insert_one(model_doc)
         
-        return {"model_id": model_id, "filename": filename, "message": "Model uploaded successfully"}
+        logger.info(f"Model uploaded: {filename} ({file_size} bytes)")
         
+        return {
+            "model_id": model_id, 
+            "filename": filename, 
+            "file_size": file_size,
+            "message": "Model uploaded successfully"
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Model upload error: {e}")
         if file_path.exists():
@@ -716,6 +731,21 @@ async def delete_model(request: Request, model_id: str):
     await db.tarjeta_positions.delete_many({"model_id": model_id})
     
     return {"message": "Model deleted successfully"}
+
+@api_router.put("/admin/models/{model_id}/bounds")
+async def update_model_bounds(request: Request, model_id: str, data: dict):
+    """Update model bounds (calculated by frontend)"""
+    await require_admin(request)
+    
+    result = await db.models_3d.update_one(
+        {"model_id": model_id},
+        {"$set": {"bounds": data.get("bounds")}}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    return {"message": "Bounds updated successfully"}
 
 @api_router.get("/models/file/{filename}")
 async def get_model_file(filename: str):
