@@ -59,6 +59,8 @@ markdown-it-py==4.0.0
 MarkupSafe==3.0.3
 mccabe==0.7.0
 mdurl==0.1.2
+aiomysql==0.2.0
+PyMySQL==1.1.1
 motor==3.3.1
 multidict==6.7.1
 mypy==1.19.1
