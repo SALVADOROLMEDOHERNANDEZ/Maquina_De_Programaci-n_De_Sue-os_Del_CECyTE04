@@ -1,73 +1,125 @@
-# Dependencies
-node_modules/
+# ═══════════════════════════════════════════════════════════
+# .gitignore - Máquina de Programación de Sueños CECyTE 04
+# ═══════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════
+# Python
+# ═══════════════════════════════════════════════════════════
 __pycache__/
-*.pyc
-.env
-*.env.local
-
-# Build
-build/
-dist/
+*.py[cod]
+*$py.class
+*.so
+.Python
 *.egg-info/
+dist/
+build/
+venv/
+env/
+ENV/
 
-# IDE
+# ═══════════════════════════════════════════════════════════
+# Node.js / React
+# ═══════════════════════════════════════════════════════════
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp/
+.pnp.js
+coverage/
+build/
+.cache/
+
+# ═══════════════════════════════════════════════════════════
+# Environment Variables (IMPORTANTE)
+# ═══════════════════════════════════════════════════════════
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+*.env.*
+
+# ═══════════════════════════════════════════════════════════
+# IDE / Editors
+# ═══════════════════════════════════════════════════════════
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
 
-# OS
+# ═══════════════════════════════════════════════════════════
+# OS Files
+# ═══════════════════════════════════════════════════════════
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
 
+# ═══════════════════════════════════════════════════════════
 # Logs
+# ═══════════════════════════════════════════════════════════
 *.log
 logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Uploads (keep directory but ignore files)
+# ═══════════════════════════════════════════════════════════
+# Testing
+# ═══════════════════════════════════════════════════════════
+coverage/
+.nyc_output/
+test_reports/
+*.coverage
+.pytest_cache/
+.tox/
+
+# ═══════════════════════════════════════════════════════════
+# Database
+# ═══════════════════════════════════════════════════════════
+*.db
+*.sqlite
+*.sqlite3
+
+# ═══════════════════════════════════════════════════════════
+# Uploads (Modelos 3D)
+# Mantener carpeta pero ignorar archivos subidos
+# ═══════════════════════════════════════════════════════════
 backend/uploads/models/*
 !backend/uploads/models/.gitkeep
 
-# Test reports
-test_reports/
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/1.pack
-frontend/node_modules/.cache/default-development/0.pack
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/2.pack
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
+# ═══════════════════════════════════════════════════════════
+# Backups y Temporales
+# ═══════════════════════════════════════════════════════════
+*.bak
+*.backup
+*.tmp
+*.temp
+*_backup.*
+*_old.*
+
+# ═══════════════════════════════════════════════════════════
+# Emergent Platform (No modificar)
+# ═══════════════════════════════════════════════════════════
+.emergent/
+
+# ═══════════════════════════════════════════════════════════
+# Archivos Específicos del Proyecto (No subir)
+# ═══════════════════════════════════════════════════════════
+backend/server_mongodb_backup.py
+backend_test.py
+auth_testing.md
+test_result.md
+design_guidelines.json
