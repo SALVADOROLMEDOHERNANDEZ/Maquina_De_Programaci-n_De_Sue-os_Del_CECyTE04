@@ -38,8 +38,10 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
-*.env
-*.env.*
+
+# Permitir plantillas de ejemplo
+!.env.example
+!.env.template
 
 # ═══════════════════════════════════════════════════════════
 # IDE / Editors
