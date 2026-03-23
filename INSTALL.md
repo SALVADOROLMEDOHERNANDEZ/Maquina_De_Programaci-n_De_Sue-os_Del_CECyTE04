@@ -5,7 +5,7 @@
 ### Software necesario:
 - **Node.js** v18+ (v20.20.0 recomendado) - [Descargar](https://nodejs.org/)
 - **Python** 3.9+ (3.11 recomendado) - [Descargar](https://python.org/)
-- **MongoDB** 6.0+ - [Descargar](https://mongodb.com/try/download/community)
+- **MySQL** 8.0+ - [Descargar](https://dev.mysql.com/downloads/mysql/)
 - **Git** - [Descargar](https://git-scm.com/)
 - **Yarn** - Instalación: `npm install -g yarn`
 
@@ -14,6 +14,7 @@
 - **Hugging Face Token** - [Obtener gratis](https://huggingface.co/settings/tokens)
 
 > 📘 **Nota:** Este proyecto usa IA 100% gratuita (Google Gemini + Hugging Face)
+> 🗄️ **Base de Datos:** MySQL (compatible con Hostinger y phpMyAdmin)
 
 ---
 
@@ -127,10 +128,18 @@ mkdir uploads\models
 Crea el archivo `backend/.env` y pega este contenido:
 
 ```env
-# MongoDB (Local)
-MONGO_URL="mongodb://localhost:27017"
-DB_NAME="cecyte04_dreams"
-CORS_ORIGINS="*"
+# MySQL (Local)
+MYSQL_HOST="localhost"
+MYSQL_PORT="3306"
+MYSQL_USER="root"
+MYSQL_PASSWORD=""
+MYSQL_DATABASE="cecyte04_dreams"
+
+# Para Hostinger (actualizar con tus credenciales):
+# MYSQL_HOST="mysql-xxxxx.servers.hostinger.com"
+# MYSQL_USER="u123456789_cecyte04"
+# MYSQL_PASSWORD="tu_contraseña"
+# MYSQL_DATABASE="u123456789_cecyte04_dreams"
 
 # ═══════════════════════════════════════════════════════
 # API KEYS GRATUITAS (¡Obligatorio para IA!)
@@ -227,37 +236,58 @@ REACT_APP_BACKEND_URL=https://tu-dominio.com
 
 ---
 
-## 🗄️ Paso 4: Configurar MongoDB
+## 🗄️ Paso 4: Configurar MySQL
 
-### 4.1 Iniciar MongoDB
+### 4.1 Iniciar MySQL
 
 **Linux:**
 ```bash
-sudo systemctl start mongod
-sudo systemctl enable mongod  # Iniciar automáticamente
+sudo systemctl start mysql
+sudo systemctl enable mysql  # Iniciar automáticamente
 ```
 
 **Mac:**
 ```bash
-brew services start mongodb-community
+brew services start mysql
 ```
 
 **Windows:**
-- MongoDB se inicia automáticamente si lo instalaste como servicio
-- O busca "MongoDB Compass" y conéctate a `mongodb://localhost:27017`
+- MySQL se inicia automáticamente si lo instalaste como servicio
+- O busca "MySQL Workbench" y conéctate a `localhost:3306`
 
 ### 4.2 Verificar conexión
 
 ```bash
-mongosh
+mysql -u root -p
 ```
 
 Deberías ver:
 ```
-test>
+mysql>
 ```
 
-Escribe `exit` para salir.
+Escribe `EXIT;` para salir.
+
+### 4.3 Inicializar Base de Datos
+
+```bash
+cd backend
+python3 init_database.py
+```
+
+**Salida esperada:**
+```
+============================================================
+🚀 INICIALIZADOR DE BASE DE DATOS - CECyTE 04
+============================================================
+✅ Conectado a MySQL
+✅ Base de datos creada/verificada
+✅ Tabla creada: users
+✅ Tabla creada: especialidades
+...
+✅ BASE DE DATOS INICIALIZADA CORRECTAMENTE
+============================================================
+```
 
 ---
 
@@ -690,7 +720,8 @@ Maquina_De_Programaci-n_De_Sue-os_Del_CECyTE04/
 ```
 fastapi==0.110.1          # Framework web
 uvicorn==0.25.0           # Servidor ASGI
-motor==3.3.1              # MongoDB async driver
+aiomysql==0.2.0           # MySQL async driver
+PyMySQL==1.1.1            # MySQL connector
 python-dotenv==1.2.1      # Variables de entorno
 pydantic==2.12.5          # Validación de datos
 httpx==0.28.1             # HTTP client

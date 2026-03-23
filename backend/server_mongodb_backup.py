@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-import aiomysql
+from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
@@ -24,25 +24,10 @@ load_dotenv(ROOT_DIR / '.env')
 UPLOADS_DIR = ROOT_DIR / 'uploads' / 'models'
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-# MySQL connection pool
-db_pool = None
-
-async def get_db_pool():
-    """Get or create MySQL connection pool"""
-    global db_pool
-    if db_pool is None:
-        db_pool = await aiomysql.create_pool(
-            host=os.environ.get('MYSQL_HOST', 'localhost'),
-            port=int(os.environ.get('MYSQL_PORT', 3306)),
-            user=os.environ.get('MYSQL_USER', 'root'),
-            password=os.environ.get('MYSQL_PASSWORD', ''),
-            db=os.environ.get('MYSQL_DATABASE', 'cecyte04_dreams'),
-            charset='utf8mb4',
-            autocommit=True,
-            minsize=1,
-            maxsize=10
-        )
-    return db_pool
+# MongoDB connection
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
 
 # Create the main app
 app = FastAPI(title="Máquina de Programación de Sueños - CECyTE 04")
@@ -132,7 +117,7 @@ class TarjetaPosition(BaseModel):
     position: dict  # {x, y, z}
     rotation: dict  # {x, y, z}
     scale: float = 1.0
-    model_id: Optional[str] = None
+    model_id: Optional[str] = None  # Associated 3D model
 
 class AdminLogin(BaseModel):
     username: str
@@ -157,36 +142,23 @@ async def get_current_user(request: Request) -> Optional[dict]:
     if not session_token:
         return None
     
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute(
-                "SELECT * FROM user_sessions WHERE session_token = %s",
-                (session_token,)
-            )
-            session_doc = await cursor.fetchone()
-            
-            if not session_doc:
-                return None
-            
-            expires_at = session_doc['expires_at']
-            if isinstance(expires_at, str):
-                expires_at = datetime.fromisoformat(expires_at)
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
-            
-            if expires_at < datetime.now(timezone.utc):
-                return None
-            
-            await cursor.execute(
-                "SELECT * FROM users WHERE user_id = %s",
-                (session_doc['user_id'],)
-            )
-            user_doc = await cursor.fetchone()
-            
-            if user_doc:
-                user_doc['is_admin'] = bool(session_doc.get('is_admin', False))
-            return user_doc
+    session_doc = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
+    if not session_doc:
+        return None
+    
+    expires_at = session_doc.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    
+    if expires_at < datetime.now(timezone.utc):
+        return None
+    
+    user_doc = await db.users.find_one({"user_id": session_doc["user_id"]}, {"_id": 0})
+    if user_doc:
+        user_doc["is_admin"] = session_doc.get("is_admin", False)
+    return user_doc
 
 async def require_admin(request: Request) -> dict:
     """Require admin authentication"""
@@ -200,43 +172,41 @@ async def require_admin(request: Request) -> dict:
                 admin_token = auth_header[7:]
         
         if admin_token:
-            pool = await get_db_pool()
-            async with pool.acquire() as conn:
-                async with conn.cursor(aiomysql.DictCursor) as cursor:
-                    await cursor.execute(
-                        "SELECT * FROM admin_sessions WHERE token = %s",
-                        (admin_token,)
-                    )
-                    admin_session = await cursor.fetchone()
-                    
-                    if admin_session:
-                        expires_at = admin_session['expires_at']
-                        if isinstance(expires_at, str):
-                            expires_at = datetime.fromisoformat(expires_at)
-                        if expires_at.tzinfo is None:
-                            expires_at = expires_at.replace(tzinfo=timezone.utc)
-                        if expires_at > datetime.now(timezone.utc):
-                            return {"username": admin_session["username"], "is_admin": True}
+            admin_session = await db.admin_sessions.find_one({"token": admin_token}, {"_id": 0})
+            if admin_session:
+                expires_at = admin_session.get("expires_at")
+                if isinstance(expires_at, str):
+                    expires_at = datetime.fromisoformat(expires_at)
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if expires_at > datetime.now(timezone.utc):
+                    return {"username": admin_session["username"], "is_admin": True}
         
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
 def generate_avatar_config(nombre: str, sexo: str = "neutral") -> dict:
     """Generate avatar configuration based on name and gender"""
+    # Generate consistent colors based on name hash
     name_hash = hashlib.md5(nombre.encode()).hexdigest()
     
+    # Skin tones
     skin_tones = ["#FFDFC4", "#F0D5BE", "#D1A684", "#A67C52", "#8D5524", "#6B4423"]
     skin_index = int(name_hash[0:2], 16) % len(skin_tones)
     
+    # Hair colors
     hair_colors = ["#090806", "#2C222B", "#71635A", "#B7A69E", "#D6C4C2", "#CABFB1", "#977961", "#E6CEA8"]
     hair_index = int(name_hash[2:4], 16) % len(hair_colors)
     
+    # Eye colors
     eye_colors = ["#634E34", "#2E536F", "#3D671D", "#497665", "#1C7847", "#7A3B3F"]
     eye_index = int(name_hash[4:6], 16) % len(eye_colors)
     
+    # Clothing colors (professional)
     clothing_colors = ["#1E3A5F", "#2C3E50", "#34495E", "#7F8C8D", "#2E4A62", "#1A3A4A", "#4A4A4A"]
     clothing_index = int(name_hash[6:8], 16) % len(clothing_colors)
     
+    # Hair styles based on gender
     if sexo.lower() in ["f", "femenino", "mujer", "female"]:
         hair_styles = ["long_straight", "long_wavy", "ponytail", "bun", "shoulder_length"]
         body_type = "female"
@@ -259,7 +229,7 @@ def generate_avatar_config(nombre: str, sexo: str = "neutral") -> dict:
         "eye_color": eye_colors[eye_index],
         "clothing_color": clothing_colors[clothing_index],
         "clothing_secondary": "#FFFFFF",
-        "height": 1.0 + (int(name_hash[10:12], 16) % 30) / 100,
+        "height": 1.0 + (int(name_hash[10:12], 16) % 30) / 100,  # 1.0 to 1.3
         "accessories": []
     }
 
@@ -286,64 +256,65 @@ async def process_session(request: Request, response: Response):
             
             session_data = auth_response.json()
         
+        # Check if admin
         is_admin = session_data["email"] in ADMIN_EMAILS
         
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                # Check if user exists
-                await cursor.execute(
-                    "SELECT * FROM users WHERE email = %s",
-                    (session_data["email"],)
-                )
-                user_doc = await cursor.fetchone()
-                
-                if not user_doc:
-                    user_id = f"user_{uuid.uuid4().hex[:12]}"
-                    await cursor.execute(
-                        """INSERT INTO users (user_id, email, name, picture, is_admin, created_at)
-                           VALUES (%s, %s, %s, %s, %s, %s)""",
-                        (user_id, session_data["email"], session_data["name"], 
-                         session_data.get("picture"), is_admin, datetime.now(timezone.utc))
-                    )
-                else:
-                    user_id = user_doc["user_id"]
-                    await cursor.execute(
-                        """UPDATE users SET name = %s, picture = %s, is_admin = %s
-                           WHERE user_id = %s""",
-                        (session_data["name"], session_data.get("picture"), is_admin, user_id)
-                    )
-                
-                session_token = session_data.get("session_token", f"session_{uuid.uuid4().hex}")
-                expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-                
-                # Delete old sessions
-                await cursor.execute("DELETE FROM user_sessions WHERE user_id = %s", (user_id,))
-                
-                # Create new session
-                await cursor.execute(
-                    """INSERT INTO user_sessions (session_id, user_id, session_token, is_admin, expires_at, created_at)
-                       VALUES (%s, %s, %s, %s, %s, %s)""",
-                    (str(uuid.uuid4()), user_id, session_token, is_admin, expires_at, datetime.now(timezone.utc))
-                )
-                
-                response.set_cookie(
-                    key="session_token",
-                    value=session_token,
-                    httponly=True,
-                    secure=True,
-                    samesite="none",
-                    path="/",
-                    max_age=7 * 24 * 60 * 60
-                )
-                
-                return {
-                    "user_id": user_id,
-                    "email": session_data["email"],
+        user_doc = await db.users.find_one({"email": session_data["email"]}, {"_id": 0})
+        
+        if not user_doc:
+            user_id = f"user_{uuid.uuid4().hex[:12]}"
+            user_doc = {
+                "user_id": user_id,
+                "email": session_data["email"],
+                "name": session_data["name"],
+                "picture": session_data.get("picture"),
+                "is_admin": is_admin,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            await db.users.insert_one(user_doc)
+        else:
+            user_id = user_doc["user_id"]
+            await db.users.update_one(
+                {"user_id": user_id},
+                {"$set": {
                     "name": session_data["name"],
                     "picture": session_data.get("picture"),
                     "is_admin": is_admin
-                }
+                }}
+            )
+        
+        session_token = session_data.get("session_token", f"session_{uuid.uuid4().hex}")
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+        
+        session_doc = {
+            "session_id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "session_token": session_token,
+            "is_admin": is_admin,
+            "expires_at": expires_at.isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        await db.user_sessions.delete_many({"user_id": user_id})
+        await db.user_sessions.insert_one(session_doc)
+        
+        response.set_cookie(
+            key="session_token",
+            value=session_token,
+            httponly=True,
+            secure=True,
+            samesite="none",
+            path="/",
+            max_age=7 * 24 * 60 * 60
+        )
+        
+        return {
+            "user_id": user_id,
+            "email": session_data["email"],
+            "name": session_data["name"],
+            "picture": session_data.get("picture"),
+            "is_admin": is_admin
+        }
         
     except HTTPException:
         raise
@@ -364,13 +335,7 @@ async def logout(request: Request, response: Response):
     """Logout user and clear session"""
     session_token = request.cookies.get("session_token")
     if session_token:
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "DELETE FROM user_sessions WHERE session_token = %s",
-                    (session_token,)
-                )
+        await db.user_sessions.delete_many({"session_token": session_token})
     
     response.delete_cookie(key="session_token", path="/")
     response.delete_cookie(key="admin_token", path="/")
@@ -389,14 +354,12 @@ async def admin_login(data: AdminLogin, response: Response):
     admin_token = f"admin_{uuid.uuid4().hex}"
     expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
     
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                """INSERT INTO admin_sessions (token, username, expires_at, created_at)
-                   VALUES (%s, %s, %s, %s)""",
-                (admin_token, data.username, expires_at, datetime.now(timezone.utc))
-            )
+    await db.admin_sessions.insert_one({
+        "token": admin_token,
+        "username": data.username,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
     
     response.set_cookie(
         key="admin_token",
@@ -434,7 +397,10 @@ async def generate_story(data: SimulationRequest):
                 detail="Google Gemini API key no configurada. Obtén una gratis en https://aistudio.google.com"
             )
         
+        # Configurar Gemini
         genai.configure(api_key=api_key)
+        
+        # Usar el modelo más reciente y potente gratis
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
         
         prompt = f"""Eres un narrador inspiracional que crea historias de éxito para estudiantes de CECyTE 04 en México.
@@ -455,6 +421,7 @@ La historia debe:
 
 Escribe solo la historia, sin títulos ni etiquetas adicionales."""
         
+        # Generar contenido
         response = model.generate_content(prompt)
         historia = response.text
         
@@ -464,6 +431,7 @@ Escribe solo la historia, sin títulos ni etiquetas adicionales."""
         
     except Exception as e:
         logger.error(f"Story generation error: {e}")
+        # Fallback a historia de ejemplo si falla la API
         historia_fallback = f"""Me llamo {data.nombre} y recuerdo claramente el día que entré a CECyTE 04 para estudiar {data.carrera}. 
 
 Mis intereses siempre estuvieron en {data.intereses[0] if data.intereses else 'tecnología'}, y sabía que esta institución era el lugar perfecto para desarrollarlos. Los profesores no solo nos enseñaron teoría, sino que nos prepararon para el mundo real con proyectos prácticos y empresas reales.
@@ -493,10 +461,13 @@ async def generate_image(data: SimulationRequest):
                 detail="Hugging Face API token no configurado. Obtén uno gratis en https://huggingface.co/settings/tokens"
             )
         
+        # Crear cliente de inferencia
         client = InferenceClient(token=api_token)
         
+        # Determinar género para el prompt
         gender_desc = "mujer joven profesional" if data.sexo and data.sexo.lower() in ["f", "femenino", "mujer", "female"] else "hombre joven profesional"
         
+        # Crear prompt optimizado para Stable Diffusion
         prompt = f"""professional portrait of a successful young {gender_desc} {data.carrera} professional, 
 confident smile, modern business attire, futuristic office background, 
 holographic elements, CECyTE logo subtle, cyberpunk style, high-tech atmosphere, 
@@ -506,17 +477,21 @@ digital art, 4k, professional photography, success story,
 related to: {', '.join(data.intereses[:3])},
 masterpiece, best quality, highly detailed"""
         
+        # Prompt negativo para mejorar calidad
         negative_prompt = "low quality, blurry, distorted, ugly, deformed, amateur, bad anatomy, text, watermark"
         
         logger.info(f"Generando imagen para {data.nombre} usando Stable Diffusion")
         
+        # Generar imagen usando el modelo Stable Diffusion
+        # Usando modelo gratuito con buena calidad
         image = client.text_to_image(
-            model="stabilityai/stable-diffusion-2-1:cheapest",
+            model="stabilityai/stable-diffusion-2-1:cheapest",  # Usar versión cheapest para tier gratuito
             prompt=prompt,
             negative_prompt=negative_prompt,
-            provider="auto"
+            provider="auto"  # Auto-selecciona el proveedor más barato/rápido
         )
         
+        # Convertir la imagen PIL a base64
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         image_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
@@ -527,6 +502,7 @@ masterpiece, best quality, highly detailed"""
             
     except Exception as e:
         logger.error(f"Image generation error: {e}")
+        # No lanzar error, simplemente retornar None para que la simulación continúe sin imagen
         logger.warning("Generación de imagen fallida, continuando sin imagen")
         return {"imagen_base64": None}
 
@@ -545,23 +521,26 @@ async def save_simulation(request: Request, data: dict):
         
         simulation_id = f"sim_{uuid.uuid4().hex[:12]}"
         
+        # Generate avatar config
         avatar_config = generate_avatar_config(
             data.get("nombre", "Usuario"),
             data.get("sexo", "neutral")
         )
         
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    """INSERT INTO simulations 
-                       (simulation_id, user_id, nombre, sexo, intereses, carrera, historia, imagen_base64, avatar_config, created_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (simulation_id, user_id, data.get("nombre"), data.get("sexo"),
-                     json.dumps(data.get("intereses", [])), data.get("carrera"),
-                     data.get("historia"), data.get("imagen_base64"),
-                     json.dumps(avatar_config), datetime.now(timezone.utc))
-                )
+        simulation_doc = {
+            "simulation_id": simulation_id,
+            "user_id": user_id,
+            "nombre": data.get("nombre"),
+            "sexo": data.get("sexo"),
+            "intereses": data.get("intereses", []),
+            "carrera": data.get("carrera"),
+            "historia": data.get("historia"),
+            "imagen_base64": data.get("imagen_base64"),
+            "avatar_config": avatar_config,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        await db.simulations.insert_one(simulation_doc)
         
         return {"simulation_id": simulation_id, "avatar_config": avatar_config, "message": "Simulation saved successfully"}
         
@@ -572,23 +551,15 @@ async def save_simulation(request: Request, data: dict):
 @api_router.get("/simulation/{simulation_id}")
 async def get_simulation(simulation_id: str):
     """Get simulation by ID"""
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute(
-                "SELECT * FROM simulations WHERE simulation_id = %s",
-                (simulation_id,)
-            )
-            simulation = await cursor.fetchone()
-            
-            if not simulation:
-                raise HTTPException(status_code=404, detail="Simulation not found")
-            
-            # Parse JSON fields
-            simulation['intereses'] = json.loads(simulation['intereses']) if simulation.get('intereses') else []
-            simulation['avatar_config'] = json.loads(simulation['avatar_config']) if simulation.get('avatar_config') else None
-            
-            return simulation
+    simulation = await db.simulations.find_one(
+        {"simulation_id": simulation_id},
+        {"_id": 0}
+    )
+    
+    if not simulation:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    
+    return simulation
 
 @api_router.get("/simulations/user")
 async def get_user_simulations(request: Request):
@@ -597,62 +568,91 @@ async def get_user_simulations(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute(
-                "SELECT * FROM simulations WHERE user_id = %s ORDER BY created_at DESC LIMIT 100",
-                (user["user_id"],)
-            )
-            simulations = await cursor.fetchall()
-            
-            # Parse JSON fields
-            for sim in simulations:
-                sim['intereses'] = json.loads(sim['intereses']) if sim.get('intereses') else []
-                sim['avatar_config'] = json.loads(sim['avatar_config']) if sim.get('avatar_config') else None
-            
-            return simulations
+    simulations = await db.simulations.find(
+        {"user_id": user["user_id"]},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(100)
+    
+    return simulations
 
 # ============== ESPECIALIDADES ENDPOINTS ==============
 
 @api_router.get("/especialidades")
 async def get_especialidades():
     """Get all specialties with 3D positions"""
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute("SELECT * FROM especialidades")
-            especialidades = await cursor.fetchall()
-            
-            # Parse JSON fields
-            for esp in especialidades:
-                esp['habilidades'] = json.loads(esp['habilidades']) if esp.get('habilidades') else []
-                esp['campo_laboral'] = json.loads(esp['campo_laboral']) if esp.get('campo_laboral') else []
-                esp['posicion_3d'] = json.loads(esp['posicion_3d']) if esp.get('posicion_3d') else {"x": 0, "y": 0, "z": 0}
-            
-            return especialidades
+    count = await db.especialidades.count_documents({})
+    
+    if count == 0:
+        especialidades_data = [
+            {
+                "especialidad_id": "prog",
+                "nombre": "Programacion",
+                "descripcion": "Desarrolla software, aplicaciones web y móviles. Aprende lenguajes como Python, JavaScript, Java y más.",
+                "habilidades": ["Desarrollo Web", "Bases de Datos", "Algoritmos", "Aplicaciones Móviles", "Inteligencia Artificial"],
+                "campo_laboral": ["Desarrollador de Software", "Ingeniero de Datos", "Arquitecto de Sistemas", "DevOps Engineer"],
+                "posicion_3d": {"x": -20, "y": 0, "z": 10},
+                "color": "#00f0ff",
+                "icono": "Code"
+            },
+            {
+                "especialidad_id": "electronica",
+                "nombre": "Electronica",
+                "descripcion": "Diseña y mantiene sistemas electrónicos, desde circuitos hasta sistemas de automatización industrial.",
+                "habilidades": ["Circuitos Electrónicos", "Microcontroladores", "Automatización", "Robótica", "IoT"],
+                "campo_laboral": ["Ingeniero Electrónico", "Técnico en Automatización", "Diseñador de PCB", "Especialista en IoT"],
+                "posicion_3d": {"x": 20, "y": 0, "z": 10},
+                "color": "#ccff00",
+                "icono": "Cpu"
+            },
+            {
+                "especialidad_id": "contabilidad",
+                "nombre": "Contabilidad",
+                "descripcion": "Gestiona finanzas empresariales, elabora estados financieros y asesora en temas fiscales.",
+                "habilidades": ["Contabilidad General", "Impuestos", "Nóminas", "Auditoría", "Finanzas"],
+                "campo_laboral": ["Contador Público", "Auditor", "Asesor Fiscal", "Analista Financiero"],
+                "posicion_3d": {"x": 0, "y": 0, "z": -20},
+                "color": "#7c3aed",
+                "icono": "Calculator"
+            },
+            {
+                "especialidad_id": "administracion",
+                "nombre": "Administracion",
+                "descripcion": "Lidera equipos, gestiona recursos y desarrolla estrategias empresariales exitosas.",
+                "habilidades": ["Gestión de Proyectos", "Recursos Humanos", "Marketing", "Planeación Estratégica", "Liderazgo"],
+                "campo_laboral": ["Gerente General", "Director de RH", "Emprendedor", "Consultor Empresarial"],
+                "posicion_3d": {"x": -15, "y": 0, "z": -15},
+                "color": "#ff6b6b",
+                "icono": "Briefcase"
+            },
+            {
+                "especialidad_id": "enfermeria",
+                "nombre": "Enfermeria",
+                "descripcion": "Cuida la salud de las personas, brinda atención médica y promueve el bienestar comunitario.",
+                "habilidades": ["Cuidados de Enfermería", "Primeros Auxilios", "Farmacología", "Salud Pública", "Atención al Paciente"],
+                "campo_laboral": ["Enfermero(a) General", "Especialista en Urgencias", "Enfermero(a) Quirúrgico", "Promotor de Salud"],
+                "posicion_3d": {"x": 15, "y": 0, "z": -15},
+                "color": "#00ff9d",
+                "icono": "Heart"
+            }
+        ]
+        
+        await db.especialidades.insert_many(especialidades_data)
+    
+    especialidades = await db.especialidades.find({}, {"_id": 0}).to_list(100)
+    return especialidades
 
 @api_router.get("/especialidad/{especialidad_id}")
 async def get_especialidad(especialidad_id: str):
     """Get specialty by ID"""
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute(
-                "SELECT * FROM especialidades WHERE especialidad_id = %s",
-                (especialidad_id,)
-            )
-            especialidad = await cursor.fetchone()
-            
-            if not especialidad:
-                raise HTTPException(status_code=404, detail="Especialidad not found")
-            
-            # Parse JSON fields
-            especialidad['habilidades'] = json.loads(especialidad['habilidades']) if especialidad.get('habilidades') else []
-            especialidad['campo_laboral'] = json.loads(especialidad['campo_laboral']) if especialidad.get('campo_laboral') else []
-            especialidad['posicion_3d'] = json.loads(especialidad['posicion_3d']) if especialidad.get('posicion_3d') else {"x": 0, "y": 0, "z": 0}
-            
-            return especialidad
+    especialidad = await db.especialidades.find_one(
+        {"especialidad_id": especialidad_id},
+        {"_id": 0}
+    )
+    
+    if not especialidad:
+        raise HTTPException(status_code=404, detail="Especialidad not found")
+    
+    return especialidad
 
 # ============== 3D MODEL MANAGEMENT (ADMIN) ==============
 
@@ -665,6 +665,7 @@ async def upload_3d_model(
     """Upload a 3D model file (admin only)"""
     admin = await require_admin(request)
     
+    # Validate file extension
     allowed_extensions = ['.gltf', '.glb', '.fbx', '.obj']
     original_filename = file.filename or "model"
     file_ext = Path(original_filename).suffix.lower()
@@ -672,30 +673,38 @@ async def upload_3d_model(
     if file_ext not in allowed_extensions:
         raise HTTPException(status_code=400, detail=f"Invalid file format. Allowed: {', '.join(allowed_extensions)}")
     
+    # Generate unique filename
     model_id = f"model_{uuid.uuid4().hex[:12]}"
     filename = f"{model_id}{file_ext}"
     file_path = UPLOADS_DIR / filename
     
+    # Save file
     try:
         content = await file.read()
         file_size = len(content)
         
+        # Check file size (max 100MB)
         if file_size > 100 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File too large. Maximum 100MB")
         
         async with aiofiles.open(file_path, 'wb') as out_file:
             await out_file.write(content)
         
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    """INSERT INTO models_3d 
-                       (model_id, nombre, filename, original_filename, format, file_size, is_active, uploaded_by, uploaded_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (model_id, nombre, filename, original_filename, file_ext[1:], file_size, False,
-                     admin.get("username", admin.get("email", "admin")), datetime.now(timezone.utc))
-                )
+        # Save model info to database
+        model_doc = {
+            "model_id": model_id,
+            "nombre": nombre,
+            "filename": filename,
+            "original_filename": original_filename,
+            "format": file_ext[1:],  # Remove the dot
+            "file_size": file_size,
+            "is_active": False,
+            "bounds": None,  # Will be calculated by frontend
+            "uploaded_by": admin.get("username", admin.get("email", "admin")),
+            "uploaded_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        await db.models_3d.insert_one(model_doc)
         
         logger.info(f"Model uploaded: {filename} ({file_size} bytes)")
         
@@ -719,51 +728,31 @@ async def get_all_models(request: Request):
     """Get all uploaded 3D models (admin only)"""
     await require_admin(request)
     
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute("SELECT * FROM models_3d ORDER BY uploaded_at DESC LIMIT 100")
-            models = await cursor.fetchall()
-            
-            # Convert boolean
-            for model in models:
-                model['is_active'] = bool(model['is_active'])
-            
-            return models
+    models = await db.models_3d.find({}, {"_id": 0}).sort("uploaded_at", -1).to_list(100)
+    return models
 
 @api_router.get("/models/active")
 async def get_active_model():
     """Get the currently active 3D model"""
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute("SELECT * FROM models_3d WHERE is_active = 1 LIMIT 1")
-            model = await cursor.fetchone()
-            
-            if model:
-                model['is_active'] = bool(model['is_active'])
-            
-            return model
+    model = await db.models_3d.find_one({"is_active": True}, {"_id": 0})
+    return model
 
 @api_router.put("/admin/models/{model_id}/activate")
 async def activate_model(request: Request, model_id: str):
     """Set a model as the active campus model (admin only)"""
     await require_admin(request)
     
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            # Deactivate all models
-            await cursor.execute("UPDATE models_3d SET is_active = 0")
-            
-            # Activate selected model
-            await cursor.execute(
-                "UPDATE models_3d SET is_active = 1 WHERE model_id = %s",
-                (model_id,)
-            )
-            
-            if cursor.rowcount == 0:
-                raise HTTPException(status_code=404, detail="Model not found")
+    # Deactivate all models
+    await db.models_3d.update_many({}, {"$set": {"is_active": False}})
+    
+    # Activate selected model
+    result = await db.models_3d.update_one(
+        {"model_id": model_id},
+        {"$set": {"is_active": True}}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Model not found")
     
     return {"message": "Model activated successfully"}
 
@@ -772,25 +761,20 @@ async def delete_model(request: Request, model_id: str):
     """Delete a 3D model (admin only)"""
     await require_admin(request)
     
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute("SELECT * FROM models_3d WHERE model_id = %s", (model_id,))
-            model = await cursor.fetchone()
-            
-            if not model:
-                raise HTTPException(status_code=404, detail="Model not found")
-            
-            # Delete file
-            file_path = UPLOADS_DIR / model["filename"]
-            if file_path.exists():
-                file_path.unlink()
-            
-            # Delete from database
-            await cursor.execute("DELETE FROM models_3d WHERE model_id = %s", (model_id,))
-            
-            # Delete associated tarjeta positions
-            await cursor.execute("DELETE FROM tarjeta_positions WHERE model_id = %s", (model_id,))
+    model = await db.models_3d.find_one({"model_id": model_id}, {"_id": 0})
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    # Delete file
+    file_path = UPLOADS_DIR / model["filename"]
+    if file_path.exists():
+        file_path.unlink()
+    
+    # Delete from database
+    await db.models_3d.delete_one({"model_id": model_id})
+    
+    # Also delete associated tarjeta positions
+    await db.tarjeta_positions.delete_many({"model_id": model_id})
     
     return {"message": "Model deleted successfully"}
 
@@ -799,16 +783,13 @@ async def update_model_bounds(request: Request, model_id: str, data: dict):
     """Update model bounds (calculated by frontend)"""
     await require_admin(request)
     
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                "UPDATE models_3d SET bounds = %s WHERE model_id = %s",
-                (json.dumps(data.get("bounds")), model_id)
-            )
-            
-            if cursor.rowcount == 0:
-                raise HTTPException(status_code=404, detail="Model not found")
+    result = await db.models_3d.update_one(
+        {"model_id": model_id},
+        {"$set": {"bounds": data.get("bounds")}}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Model not found")
     
     return {"message": "Bounds updated successfully"}
 
@@ -820,6 +801,7 @@ async def get_model_file(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     
+    # Determine content type
     ext = file_path.suffix.lower()
     content_types = {
         '.gltf': 'model/gltf+json',
@@ -839,42 +821,25 @@ async def get_model_file(filename: str):
 @api_router.get("/tarjetas/positions")
 async def get_tarjeta_positions(model_id: Optional[str] = None):
     """Get all tarjeta positions for a model"""
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cursor:
-            if model_id:
-                await cursor.execute(
-                    "SELECT * FROM tarjeta_positions WHERE model_id = %s",
-                    (model_id,)
-                )
-            else:
-                await cursor.execute("SELECT * FROM tarjeta_positions")
-            
-            positions = await cursor.fetchall()
-            
-            # Parse JSON fields
-            for pos in positions:
-                pos['position'] = json.loads(pos['position']) if pos.get('position') else {"x": 0, "y": 0, "z": 0}
-                pos['rotation'] = json.loads(pos['rotation']) if pos.get('rotation') else {"x": 0, "y": 0, "z": 0}
-            
-            # If no positions exist, return default positions
-            if not positions:
-                await cursor.execute("SELECT * FROM especialidades")
-                especialidades = await cursor.fetchall()
-                
-                positions = []
-                for esp in especialidades:
-                    pos_3d = json.loads(esp['posicion_3d']) if esp.get('posicion_3d') else {"x": 0, "y": 0, "z": 0}
-                    positions.append({
-                        "tarjeta_id": f"tarjeta_{esp['especialidad_id']}",
-                        "especialidad_id": esp["especialidad_id"],
-                        "position": pos_3d,
-                        "rotation": {"x": 0, "y": 0, "z": 0},
-                        "scale": 1.0,
-                        "model_id": model_id
-                    })
-            
-            return positions
+    query = {"model_id": model_id} if model_id else {}
+    positions = await db.tarjeta_positions.find(query, {"_id": 0}).to_list(100)
+    
+    # If no positions exist, return default positions
+    if not positions:
+        especialidades = await db.especialidades.find({}, {"_id": 0}).to_list(100)
+        positions = []
+        for esp in especialidades:
+            pos = esp.get("posicion_3d", {"x": 0, "y": 0, "z": 0})
+            positions.append({
+                "tarjeta_id": f"tarjeta_{esp['especialidad_id']}",
+                "especialidad_id": esp["especialidad_id"],
+                "position": pos,
+                "rotation": {"x": 0, "y": 0, "z": 0},
+                "scale": 1.0,
+                "model_id": model_id
+            })
+    
+    return positions
 
 @api_router.put("/admin/tarjetas/position")
 async def update_tarjeta_position(request: Request, data: dict):
@@ -885,26 +850,21 @@ async def update_tarjeta_position(request: Request, data: dict):
     if not tarjeta_id:
         raise HTTPException(status_code=400, detail="tarjeta_id is required")
     
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                """INSERT INTO tarjeta_positions 
-                   (tarjeta_id, especialidad_id, position, rotation, scale, model_id, updated_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)
-                   ON DUPLICATE KEY UPDATE
-                   especialidad_id = VALUES(especialidad_id),
-                   position = VALUES(position),
-                   rotation = VALUES(rotation),
-                   scale = VALUES(scale),
-                   model_id = VALUES(model_id),
-                   updated_at = VALUES(updated_at)""",
-                (tarjeta_id, data.get("especialidad_id"),
-                 json.dumps(data.get("position", {"x": 0, "y": 0, "z": 0})),
-                 json.dumps(data.get("rotation", {"x": 0, "y": 0, "z": 0})),
-                 data.get("scale", 1.0), data.get("model_id"),
-                 datetime.now(timezone.utc))
-            )
+    update_data = {
+        "tarjeta_id": tarjeta_id,
+        "especialidad_id": data.get("especialidad_id"),
+        "position": data.get("position", {"x": 0, "y": 0, "z": 0}),
+        "rotation": data.get("rotation", {"x": 0, "y": 0, "z": 0}),
+        "scale": data.get("scale", 1.0),
+        "model_id": data.get("model_id"),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.tarjeta_positions.update_one(
+        {"tarjeta_id": tarjeta_id},
+        {"$set": update_data},
+        upsert=True
+    )
     
     return {"message": "Position updated successfully"}
 
@@ -915,27 +875,13 @@ async def bulk_update_tarjeta_positions(request: Request, data: dict):
     
     positions = data.get("positions", [])
     
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            for pos in positions:
-                await cursor.execute(
-                    """INSERT INTO tarjeta_positions 
-                       (tarjeta_id, especialidad_id, position, rotation, scale, model_id, updated_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s)
-                       ON DUPLICATE KEY UPDATE
-                       especialidad_id = VALUES(especialidad_id),
-                       position = VALUES(position),
-                       rotation = VALUES(rotation),
-                       scale = VALUES(scale),
-                       model_id = VALUES(model_id),
-                       updated_at = VALUES(updated_at)""",
-                    (pos.get("tarjeta_id"), pos.get("especialidad_id"),
-                     json.dumps(pos.get("position", {"x": 0, "y": 0, "z": 0})),
-                     json.dumps(pos.get("rotation", {"x": 0, "y": 0, "z": 0})),
-                     pos.get("scale", 1.0), pos.get("model_id"),
-                     datetime.now(timezone.utc))
-                )
+    for pos in positions:
+        pos["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.tarjeta_positions.update_one(
+            {"tarjeta_id": pos["tarjeta_id"]},
+            {"$set": pos},
+            upsert=True
+        )
     
     return {"message": f"Updated {len(positions)} positions"}
 
@@ -945,20 +891,13 @@ async def bulk_update_tarjeta_positions(request: Request, data: dict):
 async def send_poster(data: SendPosterRequest, background_tasks: BackgroundTasks):
     """Send poster via email and/or WhatsApp"""
     try:
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute(
-                    "SELECT * FROM simulations WHERE simulation_id = %s",
-                    (data.simulation_id,)
-                )
-                simulation = await cursor.fetchone()
-                
-                if not simulation:
-                    raise HTTPException(status_code=404, detail="Simulation not found")
-                
-                # Parse JSON
-                simulation['intereses'] = json.loads(simulation['intereses']) if simulation.get('intereses') else []
+        simulation = await db.simulations.find_one(
+            {"simulation_id": data.simulation_id},
+            {"_id": 0}
+        )
+        
+        if not simulation:
+            raise HTTPException(status_code=404, detail="Simulation not found")
         
         results = {"email": None, "whatsapp": None}
         
@@ -1086,22 +1025,11 @@ async def get_campus_info():
 
 @api_router.get("/")
 async def root():
-    return {"message": "Máquina de Programación de Sueños - CECyTE 04 API", "status": "active", "database": "MySQL"}
+    return {"message": "Máquina de Programación de Sueños - CECyTE 04 API", "status": "active"}
 
 @api_router.get("/health")
 async def health_check():
-    """Health check endpoint with database connection test"""
-    try:
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute("SELECT 1")
-                await cursor.fetchone()
-        
-        return {"status": "healthy", "service": "cecyte04-dreams-api", "database": "MySQL", "connection": "OK"}
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {"status": "unhealthy", "service": "cecyte04-dreams-api", "database": "MySQL", "connection": "FAILED", "error": str(e)}
+    return {"status": "healthy", "service": "cecyte04-dreams-api"}
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -1114,17 +1042,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-async def startup():
-    """Initialize database connection pool on startup"""
-    await get_db_pool()
-    logger.info("✅ MySQL connection pool initialized")
-
 @app.on_event("shutdown")
-async def shutdown():
-    """Close database connection pool on shutdown"""
-    global db_pool
-    if db_pool:
-        db_pool.close()
-        await db_pool.wait_closed()
-        logger.info("✅ MySQL connection pool closed")
+async def shutdown_db_client():
+    client.close()
