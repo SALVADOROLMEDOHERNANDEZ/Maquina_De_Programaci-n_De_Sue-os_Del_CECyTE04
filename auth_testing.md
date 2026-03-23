@@ -58,7 +58,7 @@ await page.context.add_cookies([{
     "secure": true,
     "sameSite": "None"
 }]);
-await page.goto("https://experiencia-futuro.preview.emergentagent.com/dashboard");
+await page.goto("https://model-perfect.preview.emergentagent.com/dashboard");
 ```
 
 ## Quick Debug

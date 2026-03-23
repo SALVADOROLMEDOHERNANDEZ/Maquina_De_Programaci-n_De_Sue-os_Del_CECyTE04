@@ -386,79 +386,125 @@ async def check_admin(request: Request):
 
 @api_router.post("/simulation/generate-story")
 async def generate_story(data: SimulationRequest):
-    """Generate personalized story using GPT-5.2"""
+    """Generate personalized story using Google Gemini (FREE)"""
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        import google.generativeai as genai
         
-        api_key = os.environ.get("EMERGENT_LLM_KEY")
+        api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
         if not api_key:
-            raise HTTPException(status_code=500, detail="LLM API key not configured")
+            raise HTTPException(
+                status_code=500, 
+                detail="Google Gemini API key no configurada. Obtén una gratis en https://aistudio.google.com"
+            )
         
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"story_{uuid.uuid4().hex[:8]}",
-            system_message="""Eres un narrador inspiracional que crea historias de éxito para estudiantes de CECyTE 04 en México. 
-            Genera historias emotivas, motivadoras y realistas sobre el futuro académico y profesional del estudiante.
-            La historia debe ser en español, tener entre 200-300 palabras, y mostrar cómo el estudiante logra sus sueños gracias a su formación en CECyTE 04.
-            Incluye detalles específicos sobre la carrera elegida y cómo los intereses del estudiante contribuyen a su éxito.
-            El tono debe ser inspirador y futurista, como si estuvieras describiendo un sueño que se hace realidad."""
-        )
-        chat.with_model("openai", "gpt-5.2")
+        # Configurar Gemini
+        genai.configure(api_key=api_key)
         
-        prompt = f"""Crea una historia de éxito para {data.nombre}, un estudiante de CECyTE 04 que estudia {data.carrera}.
+        # Usar el modelo más reciente y potente gratis
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
         
-        Sus intereses son: {', '.join(data.intereses)}
+        prompt = f"""Eres un narrador inspiracional que crea historias de éxito para estudiantes de CECyTE 04 en México.
+
+Genera una historia emotiva, motivadora y realista sobre el futuro académico y profesional de {data.nombre}, un estudiante que estudia {data.carrera} en CECyTE 04.
+
+Sus intereses son: {', '.join(data.intereses)}
+
+La historia debe:
+- Estar en español
+- Tener entre 250-350 palabras
+- Mostrar cómo el estudiante logra sus sueños gracias a su formación en CECyTE 04
+- Incluir detalles específicos sobre la carrera elegida
+- Mostrar cómo los intereses del estudiante contribuyen a su éxito
+- Tener un tono inspirador y futurista
+- Estar escrita en primera persona, como si fuera el estudiante recordando su camino al éxito desde el futuro
+- Incluir momentos clave de su formación y logros importantes
+
+Escribe solo la historia, sin títulos ni etiquetas adicionales."""
         
-        La historia debe narrar su trayectoria desde CECyTE 04 hasta convertirse en un profesional exitoso, 
-        mostrando momentos clave de su formación, logros importantes y cómo sus intereses lo llevaron al éxito.
+        # Generar contenido
+        response = model.generate_content(prompt)
+        historia = response.text
         
-        Escribe en primera persona, como si fuera el estudiante recordando su camino al éxito desde el futuro."""
-        
-        user_message = UserMessage(text=prompt)
-        historia = await chat.send_message(user_message)
+        logger.info(f"Historia generada para {data.nombre} usando Gemini")
         
         return {"historia": historia}
         
     except Exception as e:
         logger.error(f"Story generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error generating story: {str(e)}")
+        # Fallback a historia de ejemplo si falla la API
+        historia_fallback = f"""Me llamo {data.nombre} y recuerdo claramente el día que entré a CECyTE 04 para estudiar {data.carrera}. 
+
+Mis intereses siempre estuvieron en {data.intereses[0] if data.intereses else 'tecnología'}, y sabía que esta institución era el lugar perfecto para desarrollarlos. Los profesores no solo nos enseñaron teoría, sino que nos prepararon para el mundo real con proyectos prácticos y empresas reales.
+
+Hoy, años después, trabajo en lo que siempre soñé. Mi formación en CECyTE 04 fue el cimiento que me permitió construir una carrera exitosa. Las habilidades que adquirí, tanto técnicas como personales, me abrieron puertas que jamás imaginé.
+
+Cada día agradezco haber tomado la decisión de estudiar en CECyTE 04. No solo encontré una educación de calidad, sino una comunidad que me impulsó a ser mejor cada día. Si pudiera volver atrás, elegiría el mismo camino mil veces más.
+
+El futuro que construí comenzó en esas aulas, con esos profesores y con esos compañeros. CECyTE 04 no solo me dio un título, me dio las herramientas para crear mi propio destino."""
+        
+        logger.warning("Usando historia fallback debido a error en API")
+        return {"historia": historia_fallback}
 
 @api_router.post("/simulation/generate-image")
 async def generate_image(data: SimulationRequest):
-    """Generate futuristic avatar image using GPT Image 1"""
+    """Generate futuristic avatar image using Hugging Face Inference API (FREE)"""
     try:
-        from emergentintegrations.llm.openai.image_generation import OpenAIImageGeneration
+        from huggingface_hub import InferenceClient
+        from PIL import Image
+        import io
         
-        api_key = os.environ.get("EMERGENT_LLM_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="LLM API key not configured")
+        api_token = os.environ.get("HUGGINGFACE_API_TOKEN")
+        if not api_token:
+            logger.warning("Hugging Face API token no configurado. Saltando generación de imagen.")
+            raise HTTPException(
+                status_code=500, 
+                detail="Hugging Face API token no configurado. Obtén uno gratis en https://huggingface.co/settings/tokens"
+            )
         
-        gender_desc = "female" if data.sexo and data.sexo.lower() in ["f", "femenino", "mujer", "female"] else "male"
+        # Crear cliente de inferencia
+        client = InferenceClient(token=api_token)
         
-        prompt = f"""Create a professional, futuristic digital portrait of a successful {gender_desc} {data.carrera} professional.
-        The person should appear confident and accomplished, wearing modern professional attire.
-        Background should feature subtle holographic elements and the CECyTE logo.
-        Style: Cyberpunk professional, high-tech, inspirational.
-        The image should convey success, innovation, and a bright future.
-        Include subtle elements related to: {', '.join(data.intereses[:3])}.
-        Colors: Electric blue, purple accents, and lime green highlights."""
+        # Determinar género para el prompt
+        gender_desc = "mujer joven profesional" if data.sexo and data.sexo.lower() in ["f", "femenino", "mujer", "female"] else "hombre joven profesional"
         
-        image_gen = OpenAIImageGeneration(api_key=api_key)
-        images = await image_gen.generate_images(
+        # Crear prompt optimizado para Stable Diffusion
+        prompt = f"""professional portrait of a successful young {gender_desc} {data.carrera} professional, 
+confident smile, modern business attire, futuristic office background, 
+holographic elements, CECyTE logo subtle, cyberpunk style, high-tech atmosphere, 
+inspirational, bright future, innovation, 
+electric blue and purple and lime green color scheme, 
+digital art, 4k, professional photography, success story,
+related to: {', '.join(data.intereses[:3])},
+masterpiece, best quality, highly detailed"""
+        
+        # Prompt negativo para mejorar calidad
+        negative_prompt = "low quality, blurry, distorted, ugly, deformed, amateur, bad anatomy, text, watermark"
+        
+        logger.info(f"Generando imagen para {data.nombre} usando Stable Diffusion")
+        
+        # Generar imagen usando el modelo Stable Diffusion
+        # Usando modelo gratuito con buena calidad
+        image = client.text_to_image(
+            model="stabilityai/stable-diffusion-2-1:cheapest",  # Usar versión cheapest para tier gratuito
             prompt=prompt,
-            model="gpt-image-1",
-            number_of_images=1
+            negative_prompt=negative_prompt,
+            provider="auto"  # Auto-selecciona el proveedor más barato/rápido
         )
         
-        if images and len(images) > 0:
-            image_base64 = base64.b64encode(images[0]).decode('utf-8')
-            return {"imagen_base64": image_base64}
-        else:
-            raise HTTPException(status_code=500, detail="No image generated")
+        # Convertir la imagen PIL a base64
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        image_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        logger.info("Imagen generada exitosamente")
+        
+        return {"imagen_base64": image_base64}
             
     except Exception as e:
         logger.error(f"Image generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error generating image: {str(e)}")
+        # No lanzar error, simplemente retornar None para que la simulación continúe sin imagen
+        logger.warning("Generación de imagen fallida, continuando sin imagen")
+        return {"imagen_base64": None}
 
 @api_router.post("/simulation/generate-avatar")
 async def generate_avatar(data: SimulationRequest):

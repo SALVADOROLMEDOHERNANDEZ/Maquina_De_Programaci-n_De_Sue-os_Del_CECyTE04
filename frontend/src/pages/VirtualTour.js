@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, Suspense, useMemo } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Stars, useGLTF, Environment } from '@react-three/drei';
+import { OrbitControls, Stars, Environment } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
@@ -18,7 +18,8 @@ import {
   RotateCcw,
   User,
   Loader2,
-  Box
+  Box,
+  AlertCircle
 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
@@ -165,38 +166,147 @@ function Ground() {
   );
 }
 
-// Loaded 3D Model from admin upload
-function LoadedModel({ url }) {
-  const { scene } = useGLTF(url);
-  const clonedScene = useMemo(() => scene.clone(), [scene]);
+// Loaded 3D Model from admin upload with support for multiple formats
+function LoadedModel({ url, onError }) {
+  const [model, setModel] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   
   useEffect(() => {
-    // Auto-calculate bounding box and center the model
-    const box = new THREE.Box3().setFromObject(clonedScene);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
+    let mounted = true;
+    let loadedObject = null;
     
-    // Center the model on the ground
-    clonedScene.position.x = -center.x;
-    clonedScene.position.z = -center.z;
-    clonedScene.position.y = -box.min.y; // Place on ground
-    
-    // Scale if too large or too small
-    const maxDim = Math.max(size.x, size.y, size.z);
-    if (maxDim > 60) {
-      const scaleFactor = 60 / maxDim;
-      clonedScene.scale.setScalar(scaleFactor);
-    } else if (maxDim < 10) {
-      const scaleFactor = 30 / maxDim;
-      clonedScene.scale.setScalar(scaleFactor);
-    }
-  }, [clonedScene]);
+    const loadModel = async () => {
+      if (!url) {
+        setError('No URL provided');
+        setLoading(false);
+        return;
+      }
 
-  return <primitive object={clonedScene} />;
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Determine file format from URL
+        const fileExtension = url.split('.').pop().toLowerCase().split('?')[0];
+        
+        // Import loaders dynamically based on format
+        const THREE = await import('three');
+        let loader;
+        let scene;
+        
+        if (fileExtension === 'gltf' || fileExtension === 'glb') {
+          const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader');
+          loader = new GLTFLoader();
+          
+          const gltf = await new Promise((resolve, reject) => {
+            loader.load(
+              url,
+              (gltf) => resolve(gltf),
+              undefined,
+              (error) => reject(error)
+            );
+          });
+          
+          scene = gltf.scene;
+        } else if (fileExtension === 'fbx') {
+          const { FBXLoader } = await import('three/examples/jsm/loaders/FBXLoader');
+          loader = new FBXLoader();
+          
+          scene = await new Promise((resolve, reject) => {
+            loader.load(
+              url,
+              (object) => resolve(object),
+              undefined,
+              (error) => reject(error)
+            );
+          });
+        } else if (fileExtension === 'obj') {
+          const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader');
+          loader = new OBJLoader();
+          
+          scene = await new Promise((resolve, reject) => {
+            loader.load(
+              url,
+              (object) => resolve(object),
+              undefined,
+              (error) => reject(error)
+            );
+          });
+        } else {
+          throw new Error(`Formato de archivo no soportado: ${fileExtension}`);
+        }
+        
+        if (!mounted) return;
+        
+        // Auto-calculate bounding box and center the model
+        const box = new THREE.Box3().setFromObject(scene);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        
+        // Center the model on the ground
+        scene.position.x = -center.x;
+        scene.position.z = -center.z;
+        scene.position.y = -box.min.y; // Place on ground
+        
+        // Scale if too large or too small
+        const maxDim = Math.max(size.x, size.y, size.z);
+        if (maxDim > 60) {
+          const scaleFactor = 60 / maxDim;
+          scene.scale.setScalar(scaleFactor);
+        } else if (maxDim < 10) {
+          const scaleFactor = 30 / maxDim;
+          scene.scale.setScalar(scaleFactor);
+        }
+        
+        loadedObject = scene;
+        setModel(scene);
+        setLoading(false);
+        
+      } catch (err) {
+        console.error('Error loading 3D model:', err);
+        if (mounted) {
+          setError(err.message || 'Error al cargar el modelo 3D');
+          setLoading(false);
+          if (onError) onError(err);
+        }
+      }
+    };
+    
+    loadModel();
+    
+    return () => {
+      mounted = false;
+      // Cleanup
+      if (loadedObject) {
+        loadedObject.traverse((child) => {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) {
+            if (Array.isArray(child.material)) {
+              child.material.forEach(m => m.dispose());
+            } else {
+              child.material.dispose();
+            }
+          }
+        });
+      }
+    };
+  }, [url, onError]);
+
+  if (error) {
+    console.error('Model load error:', error);
+    return null;
+  }
+  
+  if (loading || !model) {
+    return null;
+  }
+
+  return <primitive object={model} />;
 }
 
 // Escena principal
-function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrl }) {
+function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrl, onModelError }) {
   const defaultPositions = useMemo(() => [
     { x: -20, y: 2, z: 14 },
     { x: 20, y: 2, z: 14 },
@@ -222,7 +332,7 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
       
       {activeModelUrl ? (
         <Suspense fallback={null}>
-          <LoadedModel url={activeModelUrl} />
+          <LoadedModel url={activeModelUrl} onError={onModelError} />
         </Suspense>
       ) : (
         <CentralMonument />
@@ -332,6 +442,7 @@ export default function VirtualTour() {
   const [userName, setUserName] = useState('Visitante');
   const [activeModelUrl, setActiveModelUrl] = useState(null);
   const [modelLoading, setModelLoading] = useState(false);
+  const [modelError, setModelError] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -350,6 +461,7 @@ export default function VirtualTour() {
           if (modelData && modelData.filename) {
             setActiveModelUrl(`${API_URL}/api/models/file/${modelData.filename}`);
             setModelLoading(true);
+            setModelError(null);
           }
         }
         
@@ -373,6 +485,12 @@ export default function VirtualTour() {
 
   const handleSelectEspecialidad = (espId) => {
     setSelectedEspecialidad(prev => prev === espId ? null : espId);
+  };
+
+  const handleModelError = (error) => {
+    console.error('Model loading error:', error);
+    setModelError('Error al cargar el modelo 3D del plantel');
+    setModelLoading(false);
   };
 
   const selectedEsp = especialidades.find(e => e.especialidad_id === selectedEspecialidad);
@@ -427,6 +545,7 @@ export default function VirtualTour() {
                 onSelectEspecialidad={handleSelectEspecialidad}
                 tarjetaPositions={tarjetaPositions}
                 activeModelUrl={activeModelUrl}
+                onModelError={handleModelError}
               />
             </Suspense>
           </Canvas>
@@ -434,10 +553,18 @@ export default function VirtualTour() {
       </div>
 
       {/* Model loading indicator */}
-      {modelLoading && (
+      {modelLoading && !modelError && (
         <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 glass px-4 py-2 rounded-xl flex items-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin text-[#00f0ff]" />
           <span className="text-white/70 text-sm">Cargando modelo 3D...</span>
+        </div>
+      )}
+
+      {/* Model error indicator */}
+      {modelError && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 glass px-4 py-2 rounded-xl flex items-center gap-2 bg-red-500/10 border border-red-500/30">
+          <AlertCircle className="w-4 h-4 text-red-500" />
+          <span className="text-red-400 text-sm">{modelError}</span>
         </div>
       )}
 
