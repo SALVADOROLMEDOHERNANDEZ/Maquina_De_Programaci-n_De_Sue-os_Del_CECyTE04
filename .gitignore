@@ -123,3 +123,7 @@ backend_test.py
 auth_testing.md
 test_result.md
 design_guidelines.json
+-e 
+# Environment files
+*.env
+*.env.*
