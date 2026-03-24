@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback} from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
@@ -45,18 +45,31 @@ export default function AdminPanel() {
   const [especialidades, setEspecialidades] = useState([]);
   const [activeTab, setActiveTab] = useState('models');
 
-  useEffect(() => {
-    checkAdminStatus();
+  const loadData = useCallback(async () => {
+    try {
+      const modelsRes = await fetch(`${API_URL}/api/admin/models`, { credentials: 'include' });
+      if (modelsRes.ok) setModels(await modelsRes.json());
+
+      const espRes = await fetch(`${API_URL}/api/especialidades`);
+      if (espRes.ok) setEspecialidades(await espRes.json());
+
+      const posRes = await fetch(`${API_URL}/api/tarjetas/positions`);
+      if (posRes.ok) setTarjetaPositions(await posRes.json());
+    } catch (error) {
+      console.error('Load data error:', error);
+    }
   }, []);
 
-  const checkAdminStatus = async () => {
+
+    // ✅ checkAdminStatus con useCallback
+  const checkAdminStatus = useCallback(async () => {
     try {
       const response = await fetch(`${API_URL}/api/admin/check`, {
         credentials: 'include'
       });
       const data = await response.json();
       setIsAdmin(data.is_admin);
-      
+
       if (data.is_admin) {
         await loadData();
       }
@@ -65,39 +78,16 @@ export default function AdminPanel() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadData = async () => {
-    try {
-      // Load models
-      const modelsRes = await fetch(`${API_URL}/api/admin/models`, { credentials: 'include' });
-      if (modelsRes.ok) {
-        const modelsData = await modelsRes.json();
-        setModels(modelsData);
-      }
-      
-      // Load especialidades
-      const espRes = await fetch(`${API_URL}/api/especialidades`);
-      if (espRes.ok) {
-        const espData = await espRes.json();
-        setEspecialidades(espData);
-      }
-      
-      // Load tarjeta positions
-      const posRes = await fetch(`${API_URL}/api/tarjetas/positions`);
-      if (posRes.ok) {
-        const posData = await posRes.json();
-        setTarjetaPositions(posData);
-      }
-    } catch (error) {
-      console.error('Load data error:', error);
-    }
-  };
+  }, [loadData]);
+  // ✅ useEffect con dependencia correcta
+  useEffect(() => {
+    checkAdminStatus();
+  }, [checkAdminStatus]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoginLoading(true);
-    
+
     try {
       const response = await fetch(`${API_URL}/api/admin/login`, {
         method: 'POST',
@@ -105,7 +95,6 @@ export default function AdminPanel() {
         credentials: 'include',
         body: JSON.stringify({ username, password })
       });
-      
       if (response.ok) {
         setIsAdmin(true);
         toast.success('Sesión de administrador iniciada');
@@ -129,6 +118,7 @@ export default function AdminPanel() {
     navigate('/');
   };
 
+  
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
