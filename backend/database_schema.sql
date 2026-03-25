@@ -151,6 +151,104 @@ ON DUPLICATE KEY UPDATE
 DELETE FROM especialidades WHERE especialidad_id IN ('electronica', 'contabilidad', 'administracion', 'enfermeria');
 
 -- ═══════════════════════════════════════════════════════════════
+-- TABLA: badges (Insignias del sistema de gamificación)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS badges (
+    badge_id VARCHAR(50) PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    descripcion TEXT NOT NULL,
+    icono VARCHAR(50) NOT NULL,
+    color VARCHAR(20) NOT NULL,
+    puntos INT DEFAULT 10,
+    categoria ENUM('quiz', 'contribucion', 'logro', 'especial') DEFAULT 'logro',
+    requisito TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ═══════════════════════════════════════════════════════════════
+-- TABLA: user_badges (Insignias obtenidas por usuarios)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS user_badges (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(50) NOT NULL,
+    badge_id VARCHAR(50) NOT NULL,
+    awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    awarded_by VARCHAR(50) DEFAULT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (badge_id) REFERENCES badges(badge_id) ON DELETE CASCADE,
+    UNIQUE KEY unique_user_badge (user_id, badge_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_badge_id (badge_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ═══════════════════════════════════════════════════════════════
+-- TABLA: quiz_completions (Cuestionarios completados)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS quiz_completions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(50) DEFAULT NULL,
+    session_id VARCHAR(100) NOT NULL,
+    respuestas JSON NOT NULL,
+    resultado JSON,
+    puntos_obtenidos INT DEFAULT 0,
+    completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL,
+    INDEX idx_user_id (user_id),
+    INDEX idx_completed_at (completed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ═══════════════════════════════════════════════════════════════
+-- TABLA: contributions (Contribuciones al proyecto IA CECYTE)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS contributions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(50) NOT NULL,
+    tipo ENUM('codigo', 'documentacion', 'bug_report', 'feature', 'otro') NOT NULL,
+    titulo VARCHAR(255) NOT NULL,
+    descripcion TEXT,
+    url VARCHAR(500),
+    puntos INT DEFAULT 10,
+    estado ENUM('pendiente', 'aprobada', 'rechazada') DEFAULT 'pendiente',
+    revisado_por VARCHAR(50) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    INDEX idx_user_id (user_id),
+    INDEX idx_estado (estado),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ═══════════════════════════════════════════════════════════════
+-- TABLA: user_points (Puntos totales de usuarios)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS user_points (
+    user_id VARCHAR(50) PRIMARY KEY,
+    puntos_totales INT DEFAULT 0,
+    quizzes_completados INT DEFAULT 0,
+    contribuciones_aprobadas INT DEFAULT 0,
+    nivel INT DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ═══════════════════════════════════════════════════════════════
+-- INSERTAR INSIGNIAS INICIALES
+-- ═══════════════════════════════════════════════════════════════
+INSERT INTO badges (badge_id, nombre, descripcion, icono, color, puntos, categoria, requisito) VALUES
+('primer_quiz', 'Explorador Vocacional', 'Completaste tu primer cuestionario vocacional', 'Compass', '#00f0ff', 10, 'quiz', 'Completar 1 cuestionario'),
+('quiz_master', 'Maestro del Quiz', 'Completaste 5 cuestionarios vocacionales', 'Brain', '#7c3aed', 50, 'quiz', 'Completar 5 cuestionarios'),
+('primera_contribucion', 'Colaborador Iniciado', 'Hiciste tu primera contribución al proyecto IA CECYTE', 'GitBranch', '#10b981', 20, 'contribucion', 'Primera contribución aprobada'),
+('contribuidor_activo', 'Contribuidor Activo', 'Has hecho 5 contribuciones aprobadas', 'Code', '#f59e0b', 100, 'contribucion', '5 contribuciones aprobadas'),
+('documentador', 'Documentador', 'Contribuiste con documentación al proyecto', 'FileText', '#3b82f6', 30, 'contribucion', 'Contribuir documentación'),
+('bug_hunter', 'Cazador de Bugs', 'Reportaste un bug que fue corregido', 'Bug', '#ef4444', 25, 'contribucion', 'Reportar bug válido'),
+('innovador', 'Innovador', 'Propusiste una nueva característica implementada', 'Lightbulb', '#8b5cf6', 50, 'contribucion', 'Feature implementada'),
+('nivel_5', 'Aprendiz Avanzado', 'Alcanzaste el nivel 5', 'Award', '#fbbf24', 0, 'logro', 'Alcanzar nivel 5'),
+('nivel_10', 'Experto CECyTE', 'Alcanzaste el nivel 10', 'Trophy', '#f97316', 0, 'logro', 'Alcanzar nivel 10'),
+('primera_simulacion', 'Soñador', 'Creaste tu primera simulación de futuro', 'Sparkles', '#ec4899', 15, 'logro', 'Crear primera simulación'),
+('fundador', 'Miembro Fundador', 'Uno de los primeros en unirse al proyecto IA CECYTE', 'Star', '#ffd700', 100, 'especial', 'Insignia especial')
+ON DUPLICATE KEY UPDATE nombre=VALUES(nombre), descripcion=VALUES(descripcion);
+
+-- ═══════════════════════════════════════════════════════════════
 -- INFORMACIÓN DEL ESQUEMA
 -- ═══════════════════════════════════════════════════════════════
 -- Base de datos: cecyte04_dreams

@@ -2,7 +2,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Response, Request, Backgr
 from fastapi.responses import JSONResponse, FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+import aiomysql
 import os
 import logging
 from pathlib import Path
@@ -22,17 +22,25 @@ load_dotenv(ROOT_DIR / '.env')
 UPLOADS_DIR = ROOT_DIR / 'uploads' / 'models'
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-mongo_client = None
-db = None
+# MySQL connection pool
+db_pool = None
 
 async def get_db():
-    global mongo_client, db
-    if mongo_client is None:
-        mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-        db_name = os.environ.get('DB_NAME', 'cecyte04_dreams')
-        mongo_client = AsyncIOMotorClient(mongo_url)
-        db = mongo_client[db_name]
-    return db
+    """Get or create MySQL connection pool"""
+    global db_pool
+    if db_pool is None:
+        db_pool = await aiomysql.create_pool(
+            host=os.environ.get('MYSQL_HOST', 'localhost'),
+            port=int(os.environ.get('MYSQL_PORT', 3306)),
+            user=os.environ.get('MYSQL_USER', 'root'),
+            password=os.environ.get('MYSQL_PASSWORD', ''),
+            db=os.environ.get('MYSQL_DATABASE', 'cecyte04_dreams'),
+            charset='utf8mb4',
+            autocommit=True,
+            minsize=1,
+            maxsize=10
+        )
+    return db_pool
 
 app = FastAPI(title="Máquina de Programación de Sueños - CECyTE 04")
 api_router = APIRouter(prefix="/api")
@@ -68,45 +76,6 @@ class SendPosterRequest(BaseModel):
     telefono: Optional[str] = None
     metodo: str
 
-# Initial Data
-ESPECIALIDADES_INICIALES = [
-    {
-        "especialidad_id": "prog",
-        "nombre": "Programación",
-        "descripcion": "Desarrolla software, aplicaciones web y móviles. Aprende lenguajes como Python, JavaScript, Java y más.",
-        "habilidades": ["Desarrollo Web", "Bases de Datos", "Algoritmos", "Aplicaciones Móviles", "Inteligencia Artificial"],
-        "campo_laboral": ["Desarrollador de Software", "Ingeniero de Datos", "Arquitecto de Sistemas", "DevOps Engineer"],
-        "posicion_3d": {"x": -15, "y": 0, "z": 0},
-        "color": "#00f0ff",
-        "icono": "Code"
-    },
-    {
-        "especialidad_id": "mantenimiento",
-        "nombre": "Mantenimiento Industrial",
-        "descripcion": "Especialízate en el mantenimiento preventivo y correctivo de maquinaria industrial, sistemas neumáticos, hidráulicos y eléctricos.",
-        "habilidades": ["Mantenimiento Preventivo", "Sistemas Neumáticos", "Sistemas Hidráulicos", "Electricidad Industrial", "PLC y Automatización", "Soldadura", "Mecánica Industrial"],
-        "campo_laboral": ["Técnico en Mantenimiento Industrial", "Supervisor de Mantenimiento", "Ingeniero de Planta", "Especialista en Automatización"],
-        "posicion_3d": {"x": 15, "y": 0, "z": 0},
-        "color": "#ff9500",
-        "icono": "Wrench"
-    }
-]
-
-async def init_especialidades():
-    database = await get_db()
-    count = await database.especialidades.count_documents({})
-    if count == 0:
-        await database.especialidades.insert_many(ESPECIALIDADES_INICIALES)
-        logger.info("Especialidades inicializadas")
-
-def serialize_doc(doc):
-    if doc is None:
-        return None
-    doc = dict(doc)
-    if '_id' in doc:
-        del doc['_id']
-    return doc
-
 # Helper Functions
 async def get_current_user(request: Request) -> Optional[dict]:
     session_token = request.cookies.get("session_token")
@@ -117,24 +86,28 @@ async def get_current_user(request: Request) -> Optional[dict]:
     if not session_token:
         return None
     
-    database = await get_db()
-    session_doc = await database.user_sessions.find_one({"session_token": session_token})
-    if not session_doc:
-        return None
-    
-    expires_at = session_doc.get('expires_at')
-    if isinstance(expires_at, str):
-        expires_at = datetime.fromisoformat(expires_at)
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at < datetime.now(timezone.utc):
-        return None
-    
-    user_doc = await database.users.find_one({"user_id": session_doc['user_id']})
-    if user_doc:
-        user_doc = serialize_doc(user_doc)
-        user_doc['is_admin'] = bool(session_doc.get('is_admin', False))
-    return user_doc
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM user_sessions WHERE session_token = %s", (session_token,))
+            session_doc = await cursor.fetchone()
+            if not session_doc:
+                return None
+            
+            expires_at = session_doc['expires_at']
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at < datetime.now(timezone.utc):
+                return None
+            
+            await cursor.execute("SELECT * FROM users WHERE user_id = %s", (session_doc['user_id'],))
+            user_doc = await cursor.fetchone()
+            if user_doc:
+                user_doc = dict(user_doc)
+                user_doc['is_admin'] = bool(session_doc.get('is_admin', False))
+            return user_doc
 
 async def require_admin(request: Request) -> dict:
     user = await get_current_user(request)
@@ -146,16 +119,19 @@ async def require_admin(request: Request) -> dict:
                 admin_token = auth_header[7:]
         
         if admin_token:
-            database = await get_db()
-            admin_session = await database.admin_sessions.find_one({"token": admin_token})
-            if admin_session:
-                expires_at = admin_session.get('expires_at')
-                if isinstance(expires_at, str):
-                    expires_at = datetime.fromisoformat(expires_at)
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
-                if expires_at > datetime.now(timezone.utc):
-                    return {"username": admin_session["username"], "is_admin": True}
+            pool = await get_db()
+            async with pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cursor:
+                    await cursor.execute("SELECT * FROM admin_sessions WHERE token = %s", (admin_token,))
+                    admin_session = await cursor.fetchone()
+                    if admin_session:
+                        expires_at = admin_session['expires_at']
+                        if isinstance(expires_at, str):
+                            expires_at = datetime.fromisoformat(expires_at)
+                        if expires_at.tzinfo is None:
+                            expires_at = expires_at.replace(tzinfo=timezone.utc)
+                        if expires_at > datetime.now(timezone.utc):
+                            return {"username": admin_session["username"], "is_admin": True}
         
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
@@ -207,31 +183,34 @@ async def process_session(request: Request, response: Response):
             session_data = auth_response.json()
         
         is_admin = session_data["email"] in ADMIN_EMAILS
-        database = await get_db()
-        user_doc = await database.users.find_one({"email": session_data["email"]})
         
-        if not user_doc:
-            user_id = f"user_{uuid.uuid4().hex[:12]}"
-            await database.users.insert_one({
-                "user_id": user_id, "email": session_data["email"],
-                "name": session_data["name"], "picture": session_data.get("picture"),
-                "is_admin": is_admin, "created_at": datetime.now(timezone.utc)
-            })
-        else:
-            user_id = user_doc["user_id"]
-            await database.users.update_one(
-                {"user_id": user_id},
-                {"$set": {"name": session_data["name"], "picture": session_data.get("picture"), "is_admin": is_admin}}
-            )
-        
-        session_token = session_data.get("session_token", f"session_{uuid.uuid4().hex}")
-        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-        await database.user_sessions.delete_many({"user_id": user_id})
-        await database.user_sessions.insert_one({
-            "session_id": str(uuid.uuid4()), "user_id": user_id,
-            "session_token": session_token, "is_admin": is_admin,
-            "expires_at": expires_at, "created_at": datetime.now(timezone.utc)
-        })
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute("SELECT * FROM users WHERE email = %s", (session_data["email"],))
+                user_doc = await cursor.fetchone()
+                
+                if not user_doc:
+                    user_id = f"user_{uuid.uuid4().hex[:12]}"
+                    await cursor.execute(
+                        "INSERT INTO users (user_id, email, name, picture, is_admin, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (user_id, session_data["email"], session_data["name"], session_data.get("picture"), is_admin, datetime.now(timezone.utc))
+                    )
+                else:
+                    user_id = user_doc["user_id"]
+                    await cursor.execute(
+                        "UPDATE users SET name = %s, picture = %s, is_admin = %s WHERE user_id = %s",
+                        (session_data["name"], session_data.get("picture"), is_admin, user_id)
+                    )
+                
+                session_token = session_data.get("session_token", f"session_{uuid.uuid4().hex}")
+                expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+                
+                await cursor.execute("DELETE FROM user_sessions WHERE user_id = %s", (user_id,))
+                await cursor.execute(
+                    "INSERT INTO user_sessions (session_id, user_id, session_token, is_admin, expires_at, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (str(uuid.uuid4()), user_id, session_token, is_admin, expires_at, datetime.now(timezone.utc))
+                )
         
         response.set_cookie(key="session_token", value=session_token, httponly=True, secure=True, samesite="none", path="/", max_age=7*24*60*60)
         return {"user_id": user_id, "email": session_data["email"], "name": session_data["name"], "picture": session_data.get("picture"), "is_admin": is_admin}
@@ -252,8 +231,10 @@ async def get_current_user_endpoint(request: Request):
 async def logout(request: Request, response: Response):
     session_token = request.cookies.get("session_token")
     if session_token:
-        database = await get_db()
-        await database.user_sessions.delete_many({"session_token": session_token})
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("DELETE FROM user_sessions WHERE session_token = %s", (session_token,))
     response.delete_cookie(key="session_token", path="/")
     response.delete_cookie(key="admin_token", path="/")
     return {"message": "Logged out successfully"}
@@ -267,8 +248,15 @@ async def admin_login(data: AdminLogin, response: Response):
     
     admin_token = f"admin_{uuid.uuid4().hex}"
     expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
-    database = await get_db()
-    await database.admin_sessions.insert_one({"token": admin_token, "username": data.username, "expires_at": expires_at, "created_at": datetime.now(timezone.utc)})
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                "INSERT INTO admin_sessions (token, username, expires_at, created_at) VALUES (%s, %s, %s, %s)",
+                (admin_token, data.username, expires_at, datetime.now(timezone.utc))
+            )
+    
     response.set_cookie(key="admin_token", value=admin_token, httponly=True, secure=True, samesite="none", path="/", max_age=24*60*60)
     return {"message": "Admin login successful", "is_admin": True}
 
@@ -333,14 +321,18 @@ async def save_simulation(request: Request, data: dict):
         simulation_id = f"sim_{uuid.uuid4().hex[:12]}"
         avatar_config = generate_avatar_config(data.get("nombre", "Usuario"), data.get("sexo", "neutral"))
         
-        database = await get_db()
-        await database.simulations.insert_one({
-            "simulation_id": simulation_id, "user_id": user_id,
-            "nombre": data.get("nombre"), "sexo": data.get("sexo"),
-            "intereses": data.get("intereses", []), "carrera": data.get("carrera"),
-            "historia": data.get("historia"), "imagen_base64": data.get("imagen_base64"),
-            "avatar_config": avatar_config, "created_at": datetime.now(timezone.utc)
-        })
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """INSERT INTO simulations (simulation_id, user_id, nombre, sexo, intereses, carrera, historia, imagen_base64, avatar_config, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (simulation_id, user_id, data.get("nombre"), data.get("sexo"),
+                     json.dumps(data.get("intereses", [])), data.get("carrera"),
+                     data.get("historia"), data.get("imagen_base64"),
+                     json.dumps(avatar_config), datetime.now(timezone.utc))
+                )
+        
         return {"simulation_id": simulation_id, "avatar_config": avatar_config, "message": "Simulation saved successfully"}
     except Exception as e:
         logger.error(f"Save simulation error: {e}")
@@ -348,50 +340,82 @@ async def save_simulation(request: Request, data: dict):
 
 @api_router.get("/simulation/{simulation_id}")
 async def get_simulation(simulation_id: str):
-    database = await get_db()
-    simulation = await database.simulations.find_one({"simulation_id": simulation_id})
-    if not simulation:
-        raise HTTPException(status_code=404, detail="Simulation not found")
-    return serialize_doc(simulation)
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM simulations WHERE simulation_id = %s", (simulation_id,))
+            simulation = await cursor.fetchone()
+            if not simulation:
+                raise HTTPException(status_code=404, detail="Simulation not found")
+            simulation['intereses'] = json.loads(simulation['intereses']) if simulation.get('intereses') else []
+            simulation['avatar_config'] = json.loads(simulation['avatar_config']) if simulation.get('avatar_config') else None
+            return dict(simulation)
 
 @api_router.get("/simulations/user")
 async def get_user_simulations(request: Request):
     user = await get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    database = await get_db()
-    cursor = database.simulations.find({"user_id": user["user_id"]}).sort("created_at", -1).limit(100)
-    return [serialize_doc(sim) for sim in await cursor.to_list(length=100)]
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM simulations WHERE user_id = %s ORDER BY created_at DESC LIMIT 100", (user["user_id"],))
+            simulations = await cursor.fetchall()
+            for sim in simulations:
+                sim['intereses'] = json.loads(sim['intereses']) if sim.get('intereses') else []
+                sim['avatar_config'] = json.loads(sim['avatar_config']) if sim.get('avatar_config') else None
+            return [dict(s) for s in simulations]
 
 # Especialidades
 @api_router.get("/especialidades")
 async def get_especialidades():
-    database = await get_db()
-    cursor = database.especialidades.find({})
-    return [serialize_doc(esp) for esp in await cursor.to_list(length=100)]
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM especialidades")
+            especialidades = await cursor.fetchall()
+            for esp in especialidades:
+                esp['habilidades'] = json.loads(esp['habilidades']) if esp.get('habilidades') else []
+                esp['campo_laboral'] = json.loads(esp['campo_laboral']) if esp.get('campo_laboral') else []
+                esp['posicion_3d'] = json.loads(esp['posicion_3d']) if esp.get('posicion_3d') else {"x": 0, "y": 0, "z": 0}
+            return [dict(e) for e in especialidades]
 
 @api_router.get("/especialidad/{especialidad_id}")
 async def get_especialidad(especialidad_id: str):
-    database = await get_db()
-    especialidad = await database.especialidades.find_one({"especialidad_id": especialidad_id})
-    if not especialidad:
-        raise HTTPException(status_code=404, detail="Especialidad not found")
-    return serialize_doc(especialidad)
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM especialidades WHERE especialidad_id = %s", (especialidad_id,))
+            especialidad = await cursor.fetchone()
+            if not especialidad:
+                raise HTTPException(status_code=404, detail="Especialidad not found")
+            especialidad['habilidades'] = json.loads(especialidad['habilidades']) if especialidad.get('habilidades') else []
+            especialidad['campo_laboral'] = json.loads(especialidad['campo_laboral']) if especialidad.get('campo_laboral') else []
+            especialidad['posicion_3d'] = json.loads(especialidad['posicion_3d']) if especialidad.get('posicion_3d') else {"x": 0, "y": 0, "z": 0}
+            return dict(especialidad)
 
-# Career Quiz
+# Career Quiz - NUEVO
 @api_router.post("/career-quiz/recommend")
-async def recommend_career(data: CareerQuizRequest):
+async def recommend_career(request: Request, data: CareerQuizRequest):
+    session_id = str(uuid.uuid4())
+    user = await get_current_user(request)
+    user_id = user["user_id"] if user else None
+    
     try:
         import google.generativeai as genai
         api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
         if not api_key:
-            return {
+            resultado = {
                 "recomendaciones": [
                     {"carrera": "Programación", "compatibilidad": 85, "descripcion": "Ideal para ti.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True},
                     {"carrera": "Mantenimiento Industrial", "compatibilidad": 75, "descripcion": "Gran opción.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True}
                 ],
                 "mensaje": "Recomendaciones sin IA"
             }
+            # Award points even without AI
+            await award_quiz_points(user_id, session_id, data.respuestas, resultado)
+            return resultado
         
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
@@ -410,12 +434,19 @@ Responde SOLO con JSON válido:
         if text.startswith("```json"): text = text[7:]
         if text.startswith("```"): text = text[3:]
         if text.endswith("```"): text = text[:-3]
-        return json.loads(text)
+        resultado = json.loads(text)
+        
+        # Award points for completing quiz
+        await award_quiz_points(user_id, session_id, data.respuestas, resultado)
+        
+        return resultado
     except Exception as e:
         logger.error(f"Career recommendation error: {e}")
-        return {"recomendaciones": [{"carrera": "Programación", "compatibilidad": 80, "descripcion": "Carrera versátil.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True}]}
+        resultado = {"recomendaciones": [{"carrera": "Programación", "compatibilidad": 80, "descripcion": "Carrera versátil.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True}]}
+        await award_quiz_points(user_id, session_id, data.respuestas, resultado)
+        return resultado
 
-# CECYTE AI Project
+# CECYTE AI Project - NUEVO
 @api_router.get("/ia-cecyte/info")
 async def get_cecyte_ai_info():
     return {
@@ -429,7 +460,41 @@ async def get_cecyte_ai_info():
 
 @api_router.get("/ia-cecyte/developers")
 async def get_cecyte_ai_developers():
-    return {"desarrolladores": [], "mensaje": "¿Quieres aparecer aquí? Contribuye al proyecto IA CECYTE", "como_unirse": "Contacta a tu profesor de programación"}
+    """Get developers with their badges and points"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            # Get top contributors
+            await cursor.execute("""
+                SELECT u.user_id, u.name, u.email, u.picture,
+                       COALESCE(up.puntos_totales, 0) as puntos,
+                       COALESCE(up.nivel, 1) as nivel,
+                       COALESCE(up.contribuciones_aprobadas, 0) as contribuciones
+                FROM users u
+                LEFT JOIN user_points up ON u.user_id = up.user_id
+                WHERE up.contribuciones_aprobadas > 0
+                ORDER BY up.puntos_totales DESC
+                LIMIT 20
+            """)
+            developers = await cursor.fetchall()
+            
+            # Get badges for each developer
+            for dev in developers:
+                await cursor.execute("""
+                    SELECT b.badge_id, b.nombre, b.icono, b.color
+                    FROM user_badges ub
+                    JOIN badges b ON ub.badge_id = b.badge_id
+                    WHERE ub.user_id = %s
+                    ORDER BY ub.awarded_at DESC
+                    LIMIT 5
+                """, (dev['user_id'],))
+                dev['badges'] = await cursor.fetchall()
+            
+            return {
+                "desarrolladores": [dict(d) for d in developers],
+                "mensaje": "¿Quieres aparecer aquí? Contribuye al proyecto IA CECYTE",
+                "como_unirse": "Contacta a tu profesor de programación o envía tu primera contribución"
+            }
 
 @api_router.get("/ia-cecyte/docs")
 async def get_cecyte_ai_docs():
@@ -456,6 +521,295 @@ async def get_cecyte_ai_contributing():
         "reglas": ["Respeta el código de conducta", "Documenta tu código", "Sigue PEP 8"]
     }
 
+# ============== GAMIFICATION SYSTEM ==============
+
+class ContributionRequest(BaseModel):
+    tipo: str  # codigo, documentacion, bug_report, feature, otro
+    titulo: str
+    descripcion: Optional[str] = None
+    url: Optional[str] = None
+
+@api_router.get("/gamification/badges")
+async def get_all_badges():
+    """Get all available badges"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM badges ORDER BY categoria, puntos DESC")
+            badges = await cursor.fetchall()
+            return [dict(b) for b in badges]
+
+@api_router.get("/gamification/ranking")
+async def get_ranking(limit: int = 20):
+    """Get top users ranking"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("""
+                SELECT u.user_id, u.name, u.picture,
+                       COALESCE(up.puntos_totales, 0) as puntos,
+                       COALESCE(up.nivel, 1) as nivel,
+                       COALESCE(up.quizzes_completados, 0) as quizzes,
+                       COALESCE(up.contribuciones_aprobadas, 0) as contribuciones,
+                       (SELECT COUNT(*) FROM user_badges WHERE user_id = u.user_id) as total_badges
+                FROM users u
+                LEFT JOIN user_points up ON u.user_id = up.user_id
+                WHERE up.puntos_totales > 0
+                ORDER BY up.puntos_totales DESC
+                LIMIT %s
+            """, (limit,))
+            ranking = await cursor.fetchall()
+            
+            # Add position
+            for i, user in enumerate(ranking):
+                user['posicion'] = i + 1
+            
+            return {"ranking": [dict(r) for r in ranking], "total": len(ranking)}
+
+@api_router.get("/gamification/user/{user_id}")
+async def get_user_gamification(user_id: str):
+    """Get user's gamification data"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            # Get user points
+            await cursor.execute("""
+                SELECT * FROM user_points WHERE user_id = %s
+            """, (user_id,))
+            points = await cursor.fetchone()
+            
+            if not points:
+                points = {"puntos_totales": 0, "nivel": 1, "quizzes_completados": 0, "contribuciones_aprobadas": 0}
+            
+            # Get user badges
+            await cursor.execute("""
+                SELECT b.*, ub.awarded_at
+                FROM user_badges ub
+                JOIN badges b ON ub.badge_id = b.badge_id
+                WHERE ub.user_id = %s
+                ORDER BY ub.awarded_at DESC
+            """, (user_id,))
+            badges = await cursor.fetchall()
+            
+            # Get user ranking position
+            await cursor.execute("""
+                SELECT COUNT(*) + 1 as posicion
+                FROM user_points
+                WHERE puntos_totales > COALESCE((SELECT puntos_totales FROM user_points WHERE user_id = %s), 0)
+            """, (user_id,))
+            rank = await cursor.fetchone()
+            
+            # Get recent contributions
+            await cursor.execute("""
+                SELECT * FROM contributions
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 10
+            """, (user_id,))
+            contributions = await cursor.fetchall()
+            
+            return {
+                "puntos": dict(points) if isinstance(points, dict) else points,
+                "badges": [dict(b) for b in badges],
+                "posicion_ranking": rank['posicion'] if rank else 0,
+                "contribuciones": [dict(c) for c in contributions]
+            }
+
+@api_router.get("/gamification/my-profile")
+async def get_my_gamification(request: Request):
+    """Get current user's gamification profile"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await get_user_gamification(user["user_id"])
+
+@api_router.post("/gamification/contribution")
+async def submit_contribution(request: Request, data: ContributionRequest):
+    """Submit a new contribution"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute("""
+                INSERT INTO contributions (user_id, tipo, titulo, descripcion, url, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (user["user_id"], data.tipo, data.titulo, data.descripcion, data.url, datetime.now(timezone.utc)))
+            
+            return {"message": "Contribución enviada para revisión", "status": "pendiente"}
+
+@api_router.post("/admin/gamification/approve-contribution/{contribution_id}")
+async def approve_contribution(request: Request, contribution_id: int):
+    """Approve a contribution (admin only)"""
+    admin = await require_admin(request)
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            # Get contribution
+            await cursor.execute("SELECT * FROM contributions WHERE id = %s", (contribution_id,))
+            contribution = await cursor.fetchone()
+            
+            if not contribution:
+                raise HTTPException(status_code=404, detail="Contribution not found")
+            
+            if contribution['estado'] != 'pendiente':
+                raise HTTPException(status_code=400, detail="Contribution already processed")
+            
+            # Update contribution status
+            puntos = {"codigo": 30, "documentacion": 20, "bug_report": 15, "feature": 40, "otro": 10}.get(contribution['tipo'], 10)
+            
+            await cursor.execute("""
+                UPDATE contributions SET estado = 'aprobada', puntos = %s, revisado_por = %s
+                WHERE id = %s
+            """, (puntos, admin.get("username", "admin"), contribution_id))
+            
+            # Update user points
+            await cursor.execute("""
+                INSERT INTO user_points (user_id, puntos_totales, contribuciones_aprobadas, nivel)
+                VALUES (%s, %s, 1, 1)
+                ON DUPLICATE KEY UPDATE
+                puntos_totales = puntos_totales + %s,
+                contribuciones_aprobadas = contribuciones_aprobadas + 1,
+                nivel = FLOOR(puntos_totales / 100) + 1
+            """, (contribution['user_id'], puntos, puntos))
+            
+            # Check and award badges
+            await cursor.execute("SELECT contribuciones_aprobadas FROM user_points WHERE user_id = %s", (contribution['user_id'],))
+            user_points = await cursor.fetchone()
+            
+            # First contribution badge
+            if user_points and user_points['contribuciones_aprobadas'] == 1:
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'primera_contribucion', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            
+            # Active contributor badge (5 contributions)
+            if user_points and user_points['contribuciones_aprobadas'] >= 5:
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'contribuidor_activo', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            
+            # Type-specific badges
+            if contribution['tipo'] == 'documentacion':
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'documentador', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            elif contribution['tipo'] == 'bug_report':
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'bug_hunter', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            elif contribution['tipo'] == 'feature':
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'innovador', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            
+            return {"message": "Contribución aprobada", "puntos_otorgados": puntos}
+
+@api_router.get("/admin/gamification/pending-contributions")
+async def get_pending_contributions(request: Request):
+    """Get pending contributions (admin only)"""
+    await require_admin(request)
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("""
+                SELECT c.*, u.name as user_name, u.email as user_email
+                FROM contributions c
+                JOIN users u ON c.user_id = u.user_id
+                WHERE c.estado = 'pendiente'
+                ORDER BY c.created_at ASC
+            """)
+            contributions = await cursor.fetchall()
+            return [dict(c) for c in contributions]
+
+@api_router.post("/admin/gamification/award-badge")
+async def award_badge(request: Request, data: dict):
+    """Manually award a badge to a user (admin only)"""
+    admin = await require_admin(request)
+    
+    user_id = data.get("user_id")
+    badge_id = data.get("badge_id")
+    
+    if not user_id or not badge_id:
+        raise HTTPException(status_code=400, detail="user_id and badge_id required")
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            try:
+                await cursor.execute("""
+                    INSERT INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, %s, %s)
+                """, (user_id, badge_id, admin.get("username", "admin")))
+                
+                # Add badge points to user
+                await cursor.execute("SELECT puntos FROM badges WHERE badge_id = %s", (badge_id,))
+                badge = await cursor.fetchone()
+                if badge:
+                    await cursor.execute("""
+                        INSERT INTO user_points (user_id, puntos_totales, nivel)
+                        VALUES (%s, %s, 1)
+                        ON DUPLICATE KEY UPDATE
+                        puntos_totales = puntos_totales + %s,
+                        nivel = FLOOR(puntos_totales / 100) + 1
+                    """, (user_id, badge[0], badge[0]))
+                
+                return {"message": "Badge awarded successfully"}
+            except Exception as e:
+                if "Duplicate entry" in str(e):
+                    raise HTTPException(status_code=400, detail="User already has this badge")
+                raise
+
+# Function to award quiz completion points
+async def award_quiz_points(user_id: str, session_id: str, respuestas: dict, resultado: dict):
+    """Award points for completing a quiz"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            puntos = 10  # Base points for completing quiz
+            
+            # Save quiz completion
+            await cursor.execute("""
+                INSERT INTO quiz_completions (user_id, session_id, respuestas, resultado, puntos_obtenidos)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (user_id, session_id, json.dumps(respuestas), json.dumps(resultado), puntos))
+            
+            if user_id:
+                # Update user points
+                await cursor.execute("""
+                    INSERT INTO user_points (user_id, puntos_totales, quizzes_completados, nivel)
+                    VALUES (%s, %s, 1, 1)
+                    ON DUPLICATE KEY UPDATE
+                    puntos_totales = puntos_totales + %s,
+                    quizzes_completados = quizzes_completados + 1,
+                    nivel = FLOOR(puntos_totales / 100) + 1
+                """, (user_id, puntos, puntos))
+                
+                # Check for quiz badges
+                await cursor.execute("SELECT quizzes_completados FROM user_points WHERE user_id = %s", (user_id,))
+                user_points = await cursor.fetchone()
+                
+                if user_points:
+                    if user_points['quizzes_completados'] == 1:
+                        await cursor.execute("""
+                            INSERT IGNORE INTO user_badges (user_id, badge_id)
+                            VALUES (%s, 'primer_quiz')
+                        """, (user_id,))
+                    if user_points['quizzes_completados'] >= 5:
+                        await cursor.execute("""
+                            INSERT IGNORE INTO user_badges (user_id, badge_id)
+                            VALUES (%s, 'quiz_master')
+                        """, (user_id,))
+
 # 3D Models
 @api_router.post("/admin/models/upload")
 async def upload_3d_model(request: Request, file: UploadFile = File(...), nombre: str = Form(...)):
@@ -476,49 +830,62 @@ async def upload_3d_model(request: Request, file: UploadFile = File(...), nombre
     async with aiofiles.open(file_path, 'wb') as f:
         await f.write(content)
     
-    database = await get_db()
-    await database.models_3d.insert_one({
-        "model_id": model_id, "nombre": nombre, "filename": filename,
-        "original_filename": file.filename, "format": file_ext[1:],
-        "file_size": len(content), "is_active": False,
-        "uploaded_by": admin.get("username", "admin"), "uploaded_at": datetime.now(timezone.utc)
-    })
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """INSERT INTO models_3d (model_id, nombre, filename, original_filename, format, file_size, is_active, uploaded_by, uploaded_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (model_id, nombre, filename, file.filename, file_ext[1:], len(content), False, admin.get("username", "admin"), datetime.now(timezone.utc))
+            )
+    
     return {"model_id": model_id, "filename": filename, "file_size": len(content)}
 
 @api_router.get("/admin/models")
 async def get_all_models(request: Request):
     await require_admin(request)
-    database = await get_db()
-    cursor = database.models_3d.find({}).sort("uploaded_at", -1).limit(100)
-    return [serialize_doc(m) for m in await cursor.to_list(length=100)]
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM models_3d ORDER BY uploaded_at DESC LIMIT 100")
+            models = await cursor.fetchall()
+            return [dict(m) for m in models]
 
 @api_router.get("/models/active")
 async def get_active_model():
-    database = await get_db()
-    model = await database.models_3d.find_one({"is_active": True})
-    return serialize_doc(model)
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM models_3d WHERE is_active = 1 LIMIT 1")
+            model = await cursor.fetchone()
+            return dict(model) if model else None
 
 @api_router.put("/admin/models/{model_id}/activate")
 async def activate_model(request: Request, model_id: str):
     await require_admin(request)
-    database = await get_db()
-    await database.models_3d.update_many({}, {"$set": {"is_active": False}})
-    result = await database.models_3d.update_one({"model_id": model_id}, {"$set": {"is_active": True}})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Model not found")
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute("UPDATE models_3d SET is_active = 0")
+            await cursor.execute("UPDATE models_3d SET is_active = 1 WHERE model_id = %s", (model_id,))
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Model not found")
     return {"message": "Model activated"}
 
 @api_router.delete("/admin/models/{model_id}")
 async def delete_model(request: Request, model_id: str):
     await require_admin(request)
-    database = await get_db()
-    model = await database.models_3d.find_one({"model_id": model_id})
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
-    file_path = UPLOADS_DIR / model["filename"]
-    if file_path.exists():
-        file_path.unlink()
-    await database.models_3d.delete_one({"model_id": model_id})
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM models_3d WHERE model_id = %s", (model_id,))
+            model = await cursor.fetchone()
+            if not model:
+                raise HTTPException(status_code=404, detail="Model not found")
+            file_path = UPLOADS_DIR / model["filename"]
+            if file_path.exists():
+                file_path.unlink()
+            await cursor.execute("DELETE FROM models_3d WHERE model_id = %s", (model_id,))
     return {"message": "Model deleted"}
 
 @api_router.get("/models/file/{filename}")
@@ -532,16 +899,35 @@ async def get_model_file(filename: str):
 # Tarjeta Positions
 @api_router.get("/tarjetas/positions")
 async def get_tarjeta_positions(model_id: Optional[str] = None):
-    database = await get_db()
-    query = {"model_id": model_id} if model_id else {}
-    cursor = database.tarjeta_positions.find(query)
-    positions = [serialize_doc(p) for p in await cursor.to_list(length=100)]
-    
-    if not positions:
-        cursor = database.especialidades.find({})
-        especialidades = await cursor.to_list(length=100)
-        positions = [{"tarjeta_id": f"tarjeta_{e['especialidad_id']}", "especialidad_id": e["especialidad_id"], "position": e.get("posicion_3d", {"x":0,"y":0,"z":0}), "rotation": {"x":0,"y":0,"z":0}, "scale": 1.0, "model_id": model_id} for e in especialidades]
-    return positions
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            if model_id:
+                await cursor.execute("SELECT * FROM tarjeta_positions WHERE model_id = %s", (model_id,))
+            else:
+                await cursor.execute("SELECT * FROM tarjeta_positions")
+            positions = await cursor.fetchall()
+            
+            for pos in positions:
+                pos['position'] = json.loads(pos['position']) if pos.get('position') else {"x": 0, "y": 0, "z": 0}
+                pos['rotation'] = json.loads(pos['rotation']) if pos.get('rotation') else {"x": 0, "y": 0, "z": 0}
+            
+            if not positions:
+                await cursor.execute("SELECT * FROM especialidades")
+                especialidades = await cursor.fetchall()
+                positions = []
+                for e in especialidades:
+                    pos_3d = json.loads(e['posicion_3d']) if e.get('posicion_3d') else {"x": 0, "y": 0, "z": 0}
+                    positions.append({
+                        "tarjeta_id": f"tarjeta_{e['especialidad_id']}",
+                        "especialidad_id": e["especialidad_id"],
+                        "position": pos_3d,
+                        "rotation": {"x": 0, "y": 0, "z": 0},
+                        "scale": 1.0,
+                        "model_id": model_id
+                    })
+            
+            return [dict(p) for p in positions]
 
 @api_router.put("/admin/tarjetas/position")
 async def update_tarjeta_position(request: Request, data: dict):
@@ -549,17 +935,38 @@ async def update_tarjeta_position(request: Request, data: dict):
     tarjeta_id = data.get("tarjeta_id")
     if not tarjeta_id:
         raise HTTPException(status_code=400, detail="tarjeta_id required")
-    database = await get_db()
-    await database.tarjeta_positions.update_one({"tarjeta_id": tarjeta_id}, {"$set": {**data, "updated_at": datetime.now(timezone.utc)}}, upsert=True)
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """INSERT INTO tarjeta_positions (tarjeta_id, especialidad_id, position, rotation, scale, model_id, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON DUPLICATE KEY UPDATE
+                   especialidad_id = VALUES(especialidad_id),
+                   position = VALUES(position),
+                   rotation = VALUES(rotation),
+                   scale = VALUES(scale),
+                   model_id = VALUES(model_id),
+                   updated_at = VALUES(updated_at)""",
+                (tarjeta_id, data.get("especialidad_id"),
+                 json.dumps(data.get("position", {"x": 0, "y": 0, "z": 0})),
+                 json.dumps(data.get("rotation", {"x": 0, "y": 0, "z": 0})),
+                 data.get("scale", 1.0), data.get("model_id"),
+                 datetime.now(timezone.utc))
+            )
     return {"message": "Position updated"}
 
 # Poster Send
 @api_router.post("/poster/send")
 async def send_poster(data: SendPosterRequest):
-    database = await get_db()
-    simulation = await database.simulations.find_one({"simulation_id": data.simulation_id})
-    if not simulation:
-        raise HTTPException(status_code=404, detail="Simulation not found")
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM simulations WHERE simulation_id = %s", (data.simulation_id,))
+            simulation = await cursor.fetchone()
+            if not simulation:
+                raise HTTPException(status_code=404, detail="Simulation not found")
     return {"message": "Poster sending processed", "results": {"email": "not_configured", "whatsapp": "not_configured"}}
 
 # Campus Info
@@ -576,14 +983,17 @@ async def get_campus_info():
 # Health
 @api_router.get("/")
 async def root():
-    return {"message": "Máquina de Programación de Sueños - CECyTE 04 API", "status": "active", "database": "MongoDB"}
+    return {"message": "Máquina de Programación de Sueños - CECyTE 04 API", "status": "active", "database": "MySQL"}
 
 @api_router.get("/health")
 async def health_check():
     try:
-        database = await get_db()
-        await database.command("ping")
-        return {"status": "healthy", "service": "cecyte04-dreams-api", "database": "MongoDB", "connection": "OK"}
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT 1")
+                await cursor.fetchone()
+        return {"status": "healthy", "service": "cecyte04-dreams-api", "database": "MySQL", "connection": "OK"}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
 
@@ -593,11 +1003,12 @@ app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], 
 @app.on_event("startup")
 async def startup():
     await get_db()
-    await init_especialidades()
-    logger.info("MongoDB initialized")
+    logger.info("✅ MySQL connection pool initialized")
 
 @app.on_event("shutdown")
 async def shutdown():
-    global mongo_client
-    if mongo_client:
-        mongo_client.close()
+    global db_pool
+    if db_pool:
+        db_pool.close()
+        await db_pool.wait_closed()
+        logger.info("✅ MySQL connection pool closed")
