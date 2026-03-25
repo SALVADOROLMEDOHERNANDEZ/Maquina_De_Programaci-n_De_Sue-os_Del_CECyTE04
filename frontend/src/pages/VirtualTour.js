@@ -21,7 +21,7 @@ import {
   Box,
   AlertCircle
 } from 'lucide-react';
-
+import "./Diseños.css"; // archivo CSS externo para estilos
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
 // Tarjeta 3D de Especialidad
@@ -380,10 +380,11 @@ function InfoPanel({ especialidad, onClose }) {
 
   return (
     <motion.div
+      className="glass absolute top-24 right-4 w-[90%] max-w-md max-h-[70vh] overflow-y-auto p-6 rounded-xl"
       initial={{ opacity: 0, x: 50 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 50 }}
-      className="absolute top-20 right-4 w-80 glass-card rounded-2xl p-6 z-40"
+      
       data-testid="info-panel"
     >
       <button onClick={onClose} className="absolute top-4 right-4 p-1 hover:bg-white/10 rounded-full" data-testid="info-panel-close">
@@ -577,7 +578,6 @@ export default function VirtualTour() {
       <div className="absolute bottom-4 left-4 glass px-4 py-3 rounded-xl text-sm text-white/50" data-testid="tour-controls-help">
         <p>Arrastra para rotar | Scroll para zoom | Click en tarjeta</p>
       </div>
-
       {/* Legend */}
       <div className="absolute bottom-4 right-4 glass px-4 py-3 rounded-xl" data-testid="tour-legend">
         <p className="text-xs text-white/50 mb-2">Especialidades:</p>
@@ -609,6 +609,16 @@ export default function VirtualTour() {
         <User className="w-4 h-4 text-[#00f0ff]" />
         <span className="text-white text-sm">{userName}</span>
       </div>
+      {!selectedEsp && (
+        <div className="absolute top-32 right-6 z-40 glass px-6 py-4 rounded-xl max-w-sm text-center animate-pulse">
+          <h2 className="text-xl md:text-2xl font-bold bg-gradient-to-r from-cyan-400 to-fuchsia-500 bg-clip-text text-transparent tracking-widest">
+            PRÓXIMAMENTE
+          </h2>
+          <p className="mt-2 text-sm md:text-base text-white/60">
+            Muy pronto se habilitarán nuevas funciones interactivas con el modelo de la Institucion en 3D.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
