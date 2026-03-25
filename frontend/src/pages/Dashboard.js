@@ -16,6 +16,7 @@ import {
   Clock,
   Shield
 } from 'lucide-react';
+import Logo from '../assets/Logo/g6.png'; // o logo.svg
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -112,55 +113,56 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[#020408] grid-bg">
       {/* Navigation */}
       <nav className="glass border-b border-white/10 sticky top-0 z-50">
-        <div className="container-cyber flex items-center justify-between py-4">
-          <div 
-            className="flex items-center gap-3 cursor-pointer"
-            onClick={() => navigate('/')}
-          >
-            <div className="w-10 h-10 rounded-xl bg-[#ccff00] flex items-center justify-center">
-              <Cpu className="w-6 h-6 text-black" />
-            </div>
-            <span className="text-xl font-bold font-['Syne'] tracking-tight hidden sm:block">
-              CECyTE 04
-            </span>
-          </div>
+  <div className="container-cyber flex flex-col sm:flex-row items-center justify-between py-4 gap-4">
+    <div 
+      className="flex items-center gap-3 cursor-pointer"
+      onClick={() => navigate('/')}
+    >
+      {/* Logo adaptable */}
+      <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center">
+        <img src={Logo} alt="Logo" className="w-full h-auto" />
+      </div>
 
-          <div className="flex items-center gap-4">
-            {user.is_admin && (
-              <Button
-                variant="ghost"
-                onClick={() => navigate('/admin')}
-                className="text-[#7c3aed] hover:text-[#7c3aed] hover:bg-[#7c3aed]/10"
-                data-testid="admin-panel-btn"
-              >
-                <Shield className="w-4 h-4 mr-2" />
-                Admin
-              </Button>
-            )}
-            <div className="flex items-center gap-3">
-              <Avatar className="w-10 h-10 border-2 border-[#00f0ff]/30">
-                <AvatarImage src={user.picture} alt={user.name} />
-                <AvatarFallback className="bg-[#7c3aed] text-white">
-                  {user.name?.charAt(0) || 'U'}
-                </AvatarFallback>
-              </Avatar>
-              <div className="hidden md:block">
-                <p className="text-sm font-medium text-white">{user.name}</p>
-                <p className="text-xs text-white/50">{user.email}</p>
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={logout}
-              className="text-white/50 hover:text-white hover:bg-white/5"
-              data-testid="logout-btn"
-            >
-              <LogOut className="w-5 h-5" />
-            </Button>
-          </div>
+      {/* Texto adaptable */}
+      <span className="text-base sm:text-lg md:text-xl font-bold font-['Syne'] tracking-tight text-center sm:text-left">
+        Maquina de Programación de sueños del CECyTE 04 - MPSCECyTE 04
+      </span>
+    </div>
+
+    <div className="flex items-center gap-4">
+      {user.is_admin && (
+        <Button
+          variant="ghost"
+          onClick={() => navigate('/admin')}
+          className="text-[#7c3aed] hover:text-[#7c3aed] hover:bg-[#7c3aed]/10"
+        >
+          <Shield className="w-4 h-4 mr-2" />
+          Admin
+        </Button>
+      )}
+      <div className="flex items-center gap-3">
+        <Avatar className="w-10 h-10 border-2 border-[#00f0ff]/30">
+          <AvatarImage src={user.picture} alt={user.name} />
+          <AvatarFallback className="bg-[#7c3aed] text-white">
+            {user.name?.charAt(0) || 'U'}
+          </AvatarFallback>
+        </Avatar>
+        <div className="hidden md:block">
+          <p className="text-sm font-medium text-white">{user.name}</p>
+          <p className="text-xs text-white/50">{user.email}</p>
         </div>
-      </nav>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={logout}
+        className="text-white/50 hover:text-white hover:bg-white/5"
+      >
+        <LogOut className="w-5 h-5" />
+      </Button>
+    </div>
+  </div>
+</nav>
 
       {/* Main Content */}
       <main className="container-cyber py-8 md:py-12">

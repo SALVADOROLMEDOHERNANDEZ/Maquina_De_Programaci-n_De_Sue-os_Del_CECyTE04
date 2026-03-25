@@ -1,0 +1,9 @@
+.img {
+  max-width: 60px; /* tamaño máximo del logo en escritorio */
+  height: auto;
+}
+
+.span {
+  font-size: 1.25rem; /* tamaño base */
+  font-weight: bold;
+}

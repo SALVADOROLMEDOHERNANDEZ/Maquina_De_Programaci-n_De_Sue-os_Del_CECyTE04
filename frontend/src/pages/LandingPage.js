@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Sparkles, Cpu, GraduationCap, MapPin, ArrowRight, Play } from 'lucide-react';
-
+import Logo from '../assets/Logo/g6.png'; // o logo.svg
 // Feature Card Component
 function FeatureCard({ icon: Icon, title, description, color, delay }) {
   return (
@@ -78,16 +78,16 @@ export default function LandingPage() {
       <div className="absolute inset-0 grid-bg opacity-50 pointer-events-none" />
 
       {/* Navigation */}
-      <nav className="relative z-10 flex items-center justify-between px-6 md:px-12 lg:px-24 py-6">
+      <nav className="relative z-10 flex flex-col md:flex-row items-center justify-between px-6 md:px-12 lg:px-24 py-6 gap-4">
         <motion.div 
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           className="flex items-center gap-3"
         >
-          <div className="w-10 h-10 rounded-xl bg-[#ccff00] flex items-center justify-center">
-            <Cpu className="w-6 h-6 text-black" />
+          <div className="w-12 h-12 md:w-16 md:h-16 rounded-xl flex items-center justify-center">
+            <img src={Logo} alt="Logo" className="w-full h-auto"/>
           </div>
-          <span className="text-xl font-bold font-['Syne'] tracking-tight">CECyTE 04</span>
+          <span className=" text-lg sm:text-xl md:text-2xl font-bold font-['Syne'] tracking-tight text-center md:text-left">Maquina de Programación de sueños del CECyTE 04 - MPSCECyTE 04</span>
         </motion.div>
 
         <motion.div 
@@ -272,9 +272,9 @@ export default function LandingPage() {
       <footer className="relative z-10 border-t border-white/10 py-8">
         <div className="container-cyber flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <Cpu className="w-5 h-5 text-[#ccff00]" />
+            <img src={Logo} alt="Logo" className="w-7 h-6"/>
             <span className="text-sm text-white/50">
-              CECyTE 04 - Maquina de Programacion de Suenos
+              Maquina de Programación de sueños del CECyTE 04 - MPSCECyTE 04
             </span>
           </div>
           <div className="flex items-center gap-4">
