@@ -26,11 +26,8 @@ import { toast } from 'sonner';
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
 const CARRERAS = [
-  { id: 'programacion', nombre: 'Programacion', icon: Cpu },
-  { id: 'electronica', nombre: 'Electronica', icon: Cpu },
-  { id: 'contabilidad', nombre: 'Contabilidad', icon: GraduationCap },
-  { id: 'administracion', nombre: 'Administracion', icon: GraduationCap },
-  { id: 'enfermeria', nombre: 'Enfermeria', icon: Heart },
+  { id: 'prog', nombre: 'Programacion', icon: Cpu },
+  { id: 'mantenimiento', nombre: 'Mantenimiento Industrial', icon: Cpu }
 ];
 
 const INTERESES = [
@@ -466,7 +463,7 @@ export default function FutureSimulator() {
 
                 <div className="space-y-4 mb-8">
                   <div>
-                    <Label htmlFor="email" className="text-white/70">Correo electronico (opcional)</Label>
+                    <Label htmlFor="email" className="text-white/70">Correo electronico</Label>
                     <Input
                       id="email"
                       type="email"
