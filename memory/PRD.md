@@ -1,129 +1,137 @@
 # PRD - Máquina de Programación de Sueños CECyTE 04
 
 ## Descripción del Proyecto
-Aplicación full-stack para CECyTE 04 (Centro de Estudios Científicos y Tecnológicos del Estado de Tlaxcala) que permite a los estudiantes explorar carreras técnicas, simular su futuro profesional con IA, y participar en un proyecto colaborativo de inteligencia artificial.
+Aplicación full-stack para CECyTE 04 que permite a los estudiantes explorar carreras técnicas, simular su futuro profesional con IA, participar en un proyecto colaborativo de inteligencia artificial, y ganar puntos e insignias mediante gamificación.
 
 ## Stack Tecnológico
 - **Frontend:** React, Tailwind CSS, Framer Motion, React Three Fiber
 - **Backend:** FastAPI (Python)
-- **Base de Datos:** 
-  - MongoDB (entorno de desarrollo/preview)
-  - MySQL (producción/Hostinger)
+- **Base de Datos:** MySQL (compatible con phpMyAdmin/Hostinger)
 - **IA:** Google Gemini (texto), Hugging Face (imágenes)
 
 ## Funcionalidades Implementadas
 
-### ✅ Completado
-
-#### Gestión de Carreras (Actualizado)
-- **Carreras actuales:**
-  - Programación
-  - Mantenimiento Industrial
+### ✅ Gestión de Carreras
+- **Carreras actuales:** Programación, Mantenimiento Industrial
 - **Carreras eliminadas:** Contabilidad, Enfermería, Electrónica, Administración
 
-#### Cuestionario Vocacional (`/cuestionario-vocacional`)
+### ✅ Cuestionario Vocacional (`/cuestionario-vocacional`)
 - 10 preguntas dinámicas sobre gustos, habilidades e intereses
-- Soporte para preguntas de selección única y múltiple
-- Integración con IA (Google Gemini) para recomendaciones personalizadas
-- Recomendaciones incluyen carreras de CECyTE Y opciones externas
-- Análisis de perfil y fortalezas del estudiante
+- IA (Google Gemini) genera recomendaciones personalizadas
+- Incluye carreras de CECyTE Y opciones externas
+- **Otorga puntos automáticamente** al completar
 
-#### Sección IA CECYTE (`/ia-cecyte`)
-- Página dedicada al proyecto colaborativo de IA
-- Secciones: Inicio, Documentación, Cómo Contribuir, Desarrolladores
-- Endpoints API para documentación y guías de contribución
-- Diseño moderno con tema púrpura/rosa
+### ✅ Sección IA CECYTE (`/ia-cecyte`)
+- Página con 6 pestañas: Inicio, Ranking, Insignias, Documentación, Contribuir, Desarrolladores
+- Sistema completo de gamificación
+- Formulario para enviar contribuciones
+- Lista de desarrolladores con sus badges
 
-#### Landing Page Actualizada
-- Navegación con enlaces a Cuestionario e IA CECYTE
-- Tarjetas de características actualizadas (5 secciones)
-- Botones CTA para nuevas funcionalidades
+### ✅ Sistema de Gamificación (NUEVO)
+**Tablas de Base de Datos:**
+- `badges` - Insignias disponibles
+- `user_badges` - Insignias obtenidas
+- `quiz_completions` - Cuestionarios completados
+- `contributions` - Contribuciones enviadas
+- `user_points` - Puntos y niveles de usuarios
 
-#### Funcionalidades Existentes
+**11 Insignias Disponibles:**
+1. 🧭 Explorador Vocacional (primer quiz)
+2. 🧠 Maestro del Quiz (5 quizzes)
+3. 🌿 Colaborador Iniciado (primera contribución)
+4. 💻 Contribuidor Activo (5 contribuciones)
+5. 📄 Documentador
+6. 🐛 Cazador de Bugs
+7. 💡 Innovador
+8. 🏆 Aprendiz Avanzado (nivel 5)
+9. 🏅 Experto CECyTE (nivel 10)
+10. ✨ Soñador (primera simulación)
+11. ⭐ Miembro Fundador (especial)
+
+**Endpoints de Gamificación:**
+- `GET /api/gamification/badges` - Lista todas las insignias
+- `GET /api/gamification/ranking` - Top 20 usuarios
+- `GET /api/gamification/user/{user_id}` - Perfil de gamificación
+- `GET /api/gamification/my-profile` - Mi perfil
+- `POST /api/gamification/contribution` - Enviar contribución
+- `POST /api/admin/gamification/approve-contribution/{id}` - Aprobar (admin)
+- `GET /api/admin/gamification/pending-contributions` - Pendientes (admin)
+- `POST /api/admin/gamification/award-badge` - Otorgar insignia (admin)
+
+### ✅ Funcionalidades Existentes
 - Simulador de Futuro con IA
 - Tour Virtual 3D
 - Gestión de modelos 3D (admin)
 - Sistema de autenticación
 - Panel de administración
 
-## Estructura de Archivos
+## Estructura de Archivos Actualizada
 
 ```
 /app
 ├── backend/
-│   ├── server.py           # API FastAPI con MongoDB
-│   ├── database_schema.sql # Esquema MySQL (para producción)
-│   ├── .env                # Configuración
-│   └── uploads/models/     # Modelos 3D
+│   ├── server.py              # API FastAPI con MySQL + Gamificación
+│   ├── database_schema.sql    # Esquema MySQL actualizado (6 tablas nuevas)
+│   ├── init_database.py       # Script de inicialización
+│   ├── .env                   # Configuración
+│   └── uploads/models/
 ├── frontend/
 │   ├── src/
-│   │   ├── App.js          # Rutas actualizadas
+│   │   ├── App.js
 │   │   ├── pages/
-│   │   │   ├── CareerQuiz.js    # NUEVO - Cuestionario vocacional
-│   │   │   ├── CecyteAI.js      # NUEVO - Proyecto IA CECYTE
-│   │   │   ├── LandingPage.js   # Actualizado con nuevos enlaces
+│   │   │   ├── CareerQuiz.js     # Cuestionario vocacional
+│   │   │   ├── CecyteAI.js       # IA CECYTE con gamificación
+│   │   │   ├── LandingPage.js
 │   │   │   └── ...
 │   │   └── components/ui/
-│   └── craco.config.js     # Configuración de webpack (actualizada)
+│   └── craco.config.js
 └── memory/
     └── PRD.md
 ```
 
-## Endpoints API Nuevos
+## Pasos para Actualizar en tu Entorno Local
 
-### Cuestionario Vocacional
-- `POST /api/career-quiz/recommend` - Recomendaciones de carrera con IA
-
-### Proyecto IA CECYTE
-- `GET /api/ia-cecyte/info` - Información del proyecto
-- `GET /api/ia-cecyte/developers` - Lista de desarrolladores
-- `GET /api/ia-cecyte/docs` - Documentación
-- `GET /api/ia-cecyte/contributing` - Guía de contribución
-
-## Configuración de Base de Datos
-
-### Para Desarrollo (MongoDB)
-```env
-USE_MONGODB=true
-MONGO_URL=mongodb://localhost:27017
-DB_NAME=cecyte04_dreams
+### 1. Sincronizar con GitHub
+```powershell
+cd C:\Users\olmed\Downloads\MPSCECyTE04\Maquina_De_Programaci-n_De_Sue-os_Del_CECyTE04
+git pull origin master
 ```
 
-### Para Producción (MySQL/Hostinger)
-```env
-USE_MONGODB=false
-MYSQL_HOST=tu-servidor
-MYSQL_USER=tu-usuario
-MYSQL_PASSWORD=tu-contraseña
-MYSQL_DATABASE=cecyte04_dreams
+### 2. Actualizar Base de Datos
+Ejecuta el nuevo esquema en phpMyAdmin o:
+```powershell
+cd backend
+python init_database.py
+```
+
+### 3. Iniciar Servicios
+```powershell
+# Backend
+cd backend
+uvicorn server:app --host 0.0.0.0 --port 8001 --reload
+
+# Frontend (otra terminal)
+cd frontend
+yarn start
 ```
 
 ## Próximos Pasos (Backlog)
 
 ### P1 - Alta Prioridad
-- [ ] Agregar más contenido a la sección de desarrolladores de IA CECYTE
-- [ ] Crear sistema de registro de contribuidores
-- [ ] Mejorar las preguntas del cuestionario vocacional
+- [ ] Agregar notificaciones cuando se otorgan insignias
+- [ ] Panel de admin para gestionar contribuciones pendientes
+- [ ] Perfil de usuario con sus estadísticas
 
 ### P2 - Media Prioridad
-- [ ] Agregar estadísticas de uso del cuestionario
-- [ ] Crear sistema de badges/logros para desarrolladores
-- [ ] Implementar exportación de resultados del cuestionario
+- [ ] Insignias adicionales por eventos especiales
+- [ ] Sistema de niveles con beneficios
+- [ ] Exportar certificados de logros
 
 ### P3 - Baja Prioridad
-- [ ] Integrar más carreras externas en las recomendaciones
-- [ ] Crear versión móvil optimizada
-- [ ] Agregar modo oscuro/claro
-
-## Notas Importantes
-
-1. **Configuración craco.config.js:** Se ha desactivado HMR (`hot: false`) para evitar errores en el entorno de preview. En producción funciona correctamente.
-
-2. **Base de datos dual:** El proyecto soporta MongoDB (desarrollo) y MySQL (producción). Usar variable `USE_MONGODB` para cambiar.
-
-3. **APIs de IA:** Requieren claves de API:
-   - `GOOGLE_GEMINI_API_KEY` - Para generación de texto
-   - `HUGGINGFACE_API_TOKEN` - Para generación de imágenes
+- [ ] Compartir logros en redes sociales
+- [ ] Competencias entre usuarios
+- [ ] Historial de actividades
 
 ---
 *Última actualización: 25 de Marzo, 2026*
+*Versión: 2.0 - Sistema de Gamificación*

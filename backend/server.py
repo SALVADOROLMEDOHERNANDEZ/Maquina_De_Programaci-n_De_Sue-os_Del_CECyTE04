@@ -397,18 +397,25 @@ async def get_especialidad(especialidad_id: str):
 
 # Career Quiz - NUEVO
 @api_router.post("/career-quiz/recommend")
-async def recommend_career(data: CareerQuizRequest):
+async def recommend_career(request: Request, data: CareerQuizRequest):
+    session_id = str(uuid.uuid4())
+    user = await get_current_user(request)
+    user_id = user["user_id"] if user else None
+    
     try:
         import google.generativeai as genai
         api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
         if not api_key:
-            return {
+            resultado = {
                 "recomendaciones": [
                     {"carrera": "Programación", "compatibilidad": 85, "descripcion": "Ideal para ti.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True},
                     {"carrera": "Mantenimiento Industrial", "compatibilidad": 75, "descripcion": "Gran opción.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True}
                 ],
                 "mensaje": "Recomendaciones sin IA"
             }
+            # Award points even without AI
+            await award_quiz_points(user_id, session_id, data.respuestas, resultado)
+            return resultado
         
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
@@ -427,10 +434,17 @@ Responde SOLO con JSON válido:
         if text.startswith("```json"): text = text[7:]
         if text.startswith("```"): text = text[3:]
         if text.endswith("```"): text = text[:-3]
-        return json.loads(text)
+        resultado = json.loads(text)
+        
+        # Award points for completing quiz
+        await award_quiz_points(user_id, session_id, data.respuestas, resultado)
+        
+        return resultado
     except Exception as e:
         logger.error(f"Career recommendation error: {e}")
-        return {"recomendaciones": [{"carrera": "Programación", "compatibilidad": 80, "descripcion": "Carrera versátil.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True}]}
+        resultado = {"recomendaciones": [{"carrera": "Programación", "compatibilidad": 80, "descripcion": "Carrera versátil.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True}]}
+        await award_quiz_points(user_id, session_id, data.respuestas, resultado)
+        return resultado
 
 # CECYTE AI Project - NUEVO
 @api_router.get("/ia-cecyte/info")
@@ -446,7 +460,41 @@ async def get_cecyte_ai_info():
 
 @api_router.get("/ia-cecyte/developers")
 async def get_cecyte_ai_developers():
-    return {"desarrolladores": [], "mensaje": "¿Quieres aparecer aquí? Contribuye al proyecto IA CECYTE", "como_unirse": "Contacta a tu profesor de programación"}
+    """Get developers with their badges and points"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            # Get top contributors
+            await cursor.execute("""
+                SELECT u.user_id, u.name, u.email, u.picture,
+                       COALESCE(up.puntos_totales, 0) as puntos,
+                       COALESCE(up.nivel, 1) as nivel,
+                       COALESCE(up.contribuciones_aprobadas, 0) as contribuciones
+                FROM users u
+                LEFT JOIN user_points up ON u.user_id = up.user_id
+                WHERE up.contribuciones_aprobadas > 0
+                ORDER BY up.puntos_totales DESC
+                LIMIT 20
+            """)
+            developers = await cursor.fetchall()
+            
+            # Get badges for each developer
+            for dev in developers:
+                await cursor.execute("""
+                    SELECT b.badge_id, b.nombre, b.icono, b.color
+                    FROM user_badges ub
+                    JOIN badges b ON ub.badge_id = b.badge_id
+                    WHERE ub.user_id = %s
+                    ORDER BY ub.awarded_at DESC
+                    LIMIT 5
+                """, (dev['user_id'],))
+                dev['badges'] = await cursor.fetchall()
+            
+            return {
+                "desarrolladores": [dict(d) for d in developers],
+                "mensaje": "¿Quieres aparecer aquí? Contribuye al proyecto IA CECYTE",
+                "como_unirse": "Contacta a tu profesor de programación o envía tu primera contribución"
+            }
 
 @api_router.get("/ia-cecyte/docs")
 async def get_cecyte_ai_docs():
@@ -472,6 +520,295 @@ async def get_cecyte_ai_contributing():
         ],
         "reglas": ["Respeta el código de conducta", "Documenta tu código", "Sigue PEP 8"]
     }
+
+# ============== GAMIFICATION SYSTEM ==============
+
+class ContributionRequest(BaseModel):
+    tipo: str  # codigo, documentacion, bug_report, feature, otro
+    titulo: str
+    descripcion: Optional[str] = None
+    url: Optional[str] = None
+
+@api_router.get("/gamification/badges")
+async def get_all_badges():
+    """Get all available badges"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("SELECT * FROM badges ORDER BY categoria, puntos DESC")
+            badges = await cursor.fetchall()
+            return [dict(b) for b in badges]
+
+@api_router.get("/gamification/ranking")
+async def get_ranking(limit: int = 20):
+    """Get top users ranking"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("""
+                SELECT u.user_id, u.name, u.picture,
+                       COALESCE(up.puntos_totales, 0) as puntos,
+                       COALESCE(up.nivel, 1) as nivel,
+                       COALESCE(up.quizzes_completados, 0) as quizzes,
+                       COALESCE(up.contribuciones_aprobadas, 0) as contribuciones,
+                       (SELECT COUNT(*) FROM user_badges WHERE user_id = u.user_id) as total_badges
+                FROM users u
+                LEFT JOIN user_points up ON u.user_id = up.user_id
+                WHERE up.puntos_totales > 0
+                ORDER BY up.puntos_totales DESC
+                LIMIT %s
+            """, (limit,))
+            ranking = await cursor.fetchall()
+            
+            # Add position
+            for i, user in enumerate(ranking):
+                user['posicion'] = i + 1
+            
+            return {"ranking": [dict(r) for r in ranking], "total": len(ranking)}
+
+@api_router.get("/gamification/user/{user_id}")
+async def get_user_gamification(user_id: str):
+    """Get user's gamification data"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            # Get user points
+            await cursor.execute("""
+                SELECT * FROM user_points WHERE user_id = %s
+            """, (user_id,))
+            points = await cursor.fetchone()
+            
+            if not points:
+                points = {"puntos_totales": 0, "nivel": 1, "quizzes_completados": 0, "contribuciones_aprobadas": 0}
+            
+            # Get user badges
+            await cursor.execute("""
+                SELECT b.*, ub.awarded_at
+                FROM user_badges ub
+                JOIN badges b ON ub.badge_id = b.badge_id
+                WHERE ub.user_id = %s
+                ORDER BY ub.awarded_at DESC
+            """, (user_id,))
+            badges = await cursor.fetchall()
+            
+            # Get user ranking position
+            await cursor.execute("""
+                SELECT COUNT(*) + 1 as posicion
+                FROM user_points
+                WHERE puntos_totales > COALESCE((SELECT puntos_totales FROM user_points WHERE user_id = %s), 0)
+            """, (user_id,))
+            rank = await cursor.fetchone()
+            
+            # Get recent contributions
+            await cursor.execute("""
+                SELECT * FROM contributions
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 10
+            """, (user_id,))
+            contributions = await cursor.fetchall()
+            
+            return {
+                "puntos": dict(points) if isinstance(points, dict) else points,
+                "badges": [dict(b) for b in badges],
+                "posicion_ranking": rank['posicion'] if rank else 0,
+                "contribuciones": [dict(c) for c in contributions]
+            }
+
+@api_router.get("/gamification/my-profile")
+async def get_my_gamification(request: Request):
+    """Get current user's gamification profile"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await get_user_gamification(user["user_id"])
+
+@api_router.post("/gamification/contribution")
+async def submit_contribution(request: Request, data: ContributionRequest):
+    """Submit a new contribution"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute("""
+                INSERT INTO contributions (user_id, tipo, titulo, descripcion, url, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (user["user_id"], data.tipo, data.titulo, data.descripcion, data.url, datetime.now(timezone.utc)))
+            
+            return {"message": "Contribución enviada para revisión", "status": "pendiente"}
+
+@api_router.post("/admin/gamification/approve-contribution/{contribution_id}")
+async def approve_contribution(request: Request, contribution_id: int):
+    """Approve a contribution (admin only)"""
+    admin = await require_admin(request)
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            # Get contribution
+            await cursor.execute("SELECT * FROM contributions WHERE id = %s", (contribution_id,))
+            contribution = await cursor.fetchone()
+            
+            if not contribution:
+                raise HTTPException(status_code=404, detail="Contribution not found")
+            
+            if contribution['estado'] != 'pendiente':
+                raise HTTPException(status_code=400, detail="Contribution already processed")
+            
+            # Update contribution status
+            puntos = {"codigo": 30, "documentacion": 20, "bug_report": 15, "feature": 40, "otro": 10}.get(contribution['tipo'], 10)
+            
+            await cursor.execute("""
+                UPDATE contributions SET estado = 'aprobada', puntos = %s, revisado_por = %s
+                WHERE id = %s
+            """, (puntos, admin.get("username", "admin"), contribution_id))
+            
+            # Update user points
+            await cursor.execute("""
+                INSERT INTO user_points (user_id, puntos_totales, contribuciones_aprobadas, nivel)
+                VALUES (%s, %s, 1, 1)
+                ON DUPLICATE KEY UPDATE
+                puntos_totales = puntos_totales + %s,
+                contribuciones_aprobadas = contribuciones_aprobadas + 1,
+                nivel = FLOOR(puntos_totales / 100) + 1
+            """, (contribution['user_id'], puntos, puntos))
+            
+            # Check and award badges
+            await cursor.execute("SELECT contribuciones_aprobadas FROM user_points WHERE user_id = %s", (contribution['user_id'],))
+            user_points = await cursor.fetchone()
+            
+            # First contribution badge
+            if user_points and user_points['contribuciones_aprobadas'] == 1:
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'primera_contribucion', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            
+            # Active contributor badge (5 contributions)
+            if user_points and user_points['contribuciones_aprobadas'] >= 5:
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'contribuidor_activo', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            
+            # Type-specific badges
+            if contribution['tipo'] == 'documentacion':
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'documentador', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            elif contribution['tipo'] == 'bug_report':
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'bug_hunter', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            elif contribution['tipo'] == 'feature':
+                await cursor.execute("""
+                    INSERT IGNORE INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, 'innovador', %s)
+                """, (contribution['user_id'], admin.get("username", "admin")))
+            
+            return {"message": "Contribución aprobada", "puntos_otorgados": puntos}
+
+@api_router.get("/admin/gamification/pending-contributions")
+async def get_pending_contributions(request: Request):
+    """Get pending contributions (admin only)"""
+    await require_admin(request)
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute("""
+                SELECT c.*, u.name as user_name, u.email as user_email
+                FROM contributions c
+                JOIN users u ON c.user_id = u.user_id
+                WHERE c.estado = 'pendiente'
+                ORDER BY c.created_at ASC
+            """)
+            contributions = await cursor.fetchall()
+            return [dict(c) for c in contributions]
+
+@api_router.post("/admin/gamification/award-badge")
+async def award_badge(request: Request, data: dict):
+    """Manually award a badge to a user (admin only)"""
+    admin = await require_admin(request)
+    
+    user_id = data.get("user_id")
+    badge_id = data.get("badge_id")
+    
+    if not user_id or not badge_id:
+        raise HTTPException(status_code=400, detail="user_id and badge_id required")
+    
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            try:
+                await cursor.execute("""
+                    INSERT INTO user_badges (user_id, badge_id, awarded_by)
+                    VALUES (%s, %s, %s)
+                """, (user_id, badge_id, admin.get("username", "admin")))
+                
+                # Add badge points to user
+                await cursor.execute("SELECT puntos FROM badges WHERE badge_id = %s", (badge_id,))
+                badge = await cursor.fetchone()
+                if badge:
+                    await cursor.execute("""
+                        INSERT INTO user_points (user_id, puntos_totales, nivel)
+                        VALUES (%s, %s, 1)
+                        ON DUPLICATE KEY UPDATE
+                        puntos_totales = puntos_totales + %s,
+                        nivel = FLOOR(puntos_totales / 100) + 1
+                    """, (user_id, badge[0], badge[0]))
+                
+                return {"message": "Badge awarded successfully"}
+            except Exception as e:
+                if "Duplicate entry" in str(e):
+                    raise HTTPException(status_code=400, detail="User already has this badge")
+                raise
+
+# Function to award quiz completion points
+async def award_quiz_points(user_id: str, session_id: str, respuestas: dict, resultado: dict):
+    """Award points for completing a quiz"""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            puntos = 10  # Base points for completing quiz
+            
+            # Save quiz completion
+            await cursor.execute("""
+                INSERT INTO quiz_completions (user_id, session_id, respuestas, resultado, puntos_obtenidos)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (user_id, session_id, json.dumps(respuestas), json.dumps(resultado), puntos))
+            
+            if user_id:
+                # Update user points
+                await cursor.execute("""
+                    INSERT INTO user_points (user_id, puntos_totales, quizzes_completados, nivel)
+                    VALUES (%s, %s, 1, 1)
+                    ON DUPLICATE KEY UPDATE
+                    puntos_totales = puntos_totales + %s,
+                    quizzes_completados = quizzes_completados + 1,
+                    nivel = FLOOR(puntos_totales / 100) + 1
+                """, (user_id, puntos, puntos))
+                
+                # Check for quiz badges
+                await cursor.execute("SELECT quizzes_completados FROM user_points WHERE user_id = %s", (user_id,))
+                user_points = await cursor.fetchone()
+                
+                if user_points:
+                    if user_points['quizzes_completados'] == 1:
+                        await cursor.execute("""
+                            INSERT IGNORE INTO user_badges (user_id, badge_id)
+                            VALUES (%s, 'primer_quiz')
+                        """, (user_id,))
+                    if user_points['quizzes_completados'] >= 5:
+                        await cursor.execute("""
+                            INSERT IGNORE INTO user_badges (user_id, badge_id)
+                            VALUES (%s, 'quiz_master')
+                        """, (user_id,))
 
 # 3D Models
 @api_router.post("/admin/models/upload")
