@@ -21,7 +21,7 @@ import {
   Box,
   AlertCircle
 } from 'lucide-react';
-import "./Diseños.css"; // archivo CSS externo para estilos
+
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
 // Tarjeta 3D de Especialidad
