@@ -123,34 +123,32 @@ CREATE TABLE IF NOT EXISTS tarjeta_positions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ═══════════════════════════════════════════════════════════════
--- INSERTAR DATOS INICIALES: Especialidades
+-- INSERTAR DATOS INICIALES: Especialidades (ACTUALIZADAS)
+-- Solo Programación y Mantenimiento Industrial
 -- ═══════════════════════════════════════════════════════════════
 INSERT INTO especialidades (especialidad_id, nombre, descripcion, habilidades, campo_laboral, posicion_3d, color, icono) VALUES
-('prog', 'Programacion', 'Desarrolla software, aplicaciones web y móviles. Aprende lenguajes como Python, JavaScript, Java y más.',
+('prog', 'Programación', 'Desarrolla software, aplicaciones web y móviles. Aprende lenguajes como Python, JavaScript, Java y más.',
  '["Desarrollo Web", "Bases de Datos", "Algoritmos", "Aplicaciones Móviles", "Inteligencia Artificial"]',
  '["Desarrollador de Software", "Ingeniero de Datos", "Arquitecto de Sistemas", "DevOps Engineer"]',
- '{"x": -20, "y": 0, "z": 10}', '#00f0ff', 'Code'),
+ '{"x": -15, "y": 0, "z": 0}', '#00f0ff', 'Code'),
 
-('electronica', 'Electronica', 'Diseña y mantiene sistemas electrónicos, desde circuitos hasta sistemas de automatización industrial.',
- '["Circuitos Electrónicos", "Microcontroladores", "Automatización", "Robótica", "IoT"]',
- '["Ingeniero Electrónico", "Técnico en Automatización", "Diseñador de PCB", "Especialista en IoT"]',
- '{"x": 20, "y": 0, "z": 10}', '#ccff00', 'Cpu'),
+('mantenimiento', 'Mantenimiento Industrial', 'Especialízate en el mantenimiento preventivo y correctivo de maquinaria industrial, sistemas neumáticos, hidráulicos y eléctricos. Aprende a diagnosticar fallas y optimizar procesos de producción.',
+ '["Mantenimiento Preventivo", "Sistemas Neumáticos", "Sistemas Hidráulicos", "Electricidad Industrial", "PLC y Automatización", "Soldadura", "Mecánica Industrial"]',
+ '["Técnico en Mantenimiento Industrial", "Supervisor de Mantenimiento", "Ingeniero de Planta", "Especialista en Automatización", "Técnico en Sistemas Neumáticos"]',
+ '{"x": 15, "y": 0, "z": 0}', '#ff9500', 'Wrench')
+ON DUPLICATE KEY UPDATE 
+    nombre=VALUES(nombre),
+    descripcion=VALUES(descripcion),
+    habilidades=VALUES(habilidades),
+    campo_laboral=VALUES(campo_laboral),
+    posicion_3d=VALUES(posicion_3d),
+    color=VALUES(color),
+    icono=VALUES(icono);
 
-('contabilidad', 'Contabilidad', 'Gestiona finanzas empresariales, elabora estados financieros y asesora en temas fiscales.',
- '["Contabilidad General", "Impuestos", "Nóminas", "Auditoría", "Finanzas"]',
- '["Contador Público", "Auditor", "Asesor Fiscal", "Analista Financiero"]',
- '{"x": 0, "y": 0, "z": -20}', '#7c3aed', 'Calculator'),
-
-('administracion', 'Administracion', 'Lidera equipos, gestiona recursos y desarrolla estrategias empresariales exitosas.',
- '["Gestión de Proyectos", "Recursos Humanos", "Marketing", "Planeación Estratégica", "Liderazgo"]',
- '["Gerente General", "Director de RH", "Emprendedor", "Consultor Empresarial"]',
- '{"x": -15, "y": 0, "z": -15}', '#ff6b6b', 'Briefcase'),
-
-('enfermeria', 'Enfermeria', 'Cuida la salud de las personas, brinda atención médica y promueve el bienestar comunitario.',
- '["Cuidados de Enfermería", "Primeros Auxilios", "Farmacología", "Salud Pública", "Atención al Paciente"]',
- '["Enfermero(a) General", "Especialista en Urgencias", "Enfermero(a) Quirúrgico", "Promotor de Salud"]',
- '{"x": 15, "y": 0, "z": -15}', '#00ff9d', 'Heart')
-ON DUPLICATE KEY UPDATE nombre=VALUES(nombre);
+-- ═══════════════════════════════════════════════════════════════
+-- ELIMINAR CARRERAS ANTIGUAS (si existen)
+-- ═══════════════════════════════════════════════════════════════
+DELETE FROM especialidades WHERE especialidad_id IN ('electronica', 'contabilidad', 'administracion', 'enfermeria');
 
 -- ═══════════════════════════════════════════════════════════════
 -- INFORMACIÓN DEL ESQUEMA
@@ -169,5 +167,7 @@ ON DUPLICATE KEY UPDATE nombre=VALUES(nombre);
 -- - models_3d: Modelos 3D del plantel
 -- - tarjeta_positions: Posiciones en tour 3D
 -- 
--- Datos iniciales: 5 especialidades
+-- Datos iniciales: 2 especialidades
+-- - Programación
+-- - Mantenimiento Industrial
 -- ═══════════════════════════════════════════════════════════════

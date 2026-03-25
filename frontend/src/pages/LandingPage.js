@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
-import { Sparkles, Cpu, GraduationCap, MapPin, ArrowRight, Play } from 'lucide-react';
+import { Sparkles, Cpu, GraduationCap, MapPin, ArrowRight, Play, Brain, Compass } from 'lucide-react';
 
 // Feature Card Component
 function FeatureCard({ icon: Icon, title, description, color, delay }) {
@@ -95,6 +95,24 @@ export default function LandingPage() {
           animate={{ opacity: 1, x: 0 }}
           className="flex items-center gap-4"
         >
+          <Button
+            variant="ghost"
+            onClick={() => navigate('/cuestionario-vocacional')}
+            className="text-white/70 hover:text-white hover:bg-white/5 hidden md:flex"
+            data-testid="nav-quiz-btn"
+          >
+            <Compass className="w-4 h-4 mr-2" />
+            Cuestionario
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => navigate('/ia-cecyte')}
+            className="text-white/70 hover:text-white hover:bg-white/5 hidden md:flex"
+            data-testid="nav-ai-btn"
+          >
+            <Brain className="w-4 h-4 mr-2" />
+            IA CECYTE
+          </Button>
           <Button
             variant="ghost"
             onClick={() => navigate('/tour')}
@@ -213,6 +231,13 @@ export default function LandingPage() {
             delay={0}
           />
           <FeatureCard
+            icon={Compass}
+            title="Cuestionario Vocacional"
+            description="Descubre tu carrera ideal con un test inteligente que analiza tus gustos, habilidades e intereses."
+            color="#ff6b6b"
+            delay={0.05}
+          />
+          <FeatureCard
             icon={MapPin}
             title="Tour Virtual 3D"
             description="Explora el campus en realidad virtual con un avatar personalizado que te guia por cada especialidad."
@@ -224,6 +249,13 @@ export default function LandingPage() {
             title="Especialidades"
             description="Conoce todas las carreras tecnicas disponibles y sus oportunidades laborales en el mundo real."
             color="#7c3aed"
+            delay={0.15}
+          />
+          <FeatureCard
+            icon={Brain}
+            title="IA CECYTE"
+            description="Proyecto colaborativo donde estudiantes de programacion construyen su propia inteligencia artificial."
+            color="#ff9500"
             delay={0.2}
           />
         </div>
@@ -256,14 +288,25 @@ export default function LandingPage() {
               Unete a la revolucion educativa de CECyTE 04 y descubre como la tecnologia 
               puede transformar tu trayectoria profesional.
             </p>
-            <Button
-              onClick={handleGetStarted}
-              className="btn-primary rounded-full px-8 py-6 text-lg flex items-center gap-2 mx-auto"
-              data-testid="cta-start-btn"
-            >
-              Comenzar Ahora
-              <ArrowRight className="w-5 h-5" />
-            </Button>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+              <Button
+                onClick={() => navigate('/cuestionario-vocacional')}
+                className="btn-primary rounded-full px-8 py-6 text-lg flex items-center gap-2"
+                data-testid="cta-quiz-btn"
+              >
+                <Compass className="w-5 h-5" />
+                Descubre tu Carrera
+              </Button>
+              <Button
+                onClick={() => navigate('/ia-cecyte')}
+                variant="outline"
+                className="btn-secondary rounded-full px-8 py-6 text-lg flex items-center gap-2"
+                data-testid="cta-ai-btn"
+              >
+                <Brain className="w-5 h-5" />
+                Proyecto IA
+              </Button>
+            </div>
           </div>
         </motion.div>
       </section>

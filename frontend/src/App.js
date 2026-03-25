@@ -11,6 +11,8 @@ import FutureSimulator from './pages/FutureSimulator';
 import VirtualTour from './pages/VirtualTour';
 import Especialidades from './pages/Especialidades';
 import AdminPanel from './pages/AdminPanel';
+import CareerQuiz from './pages/CareerQuiz';
+import CecyteAI from './pages/CecyteAI';
 
 import './App.css';
 
@@ -33,6 +35,8 @@ function AppRouter() {
       <Route path="/especialidades" element={<Especialidades />} />
       <Route path="/simulation/:id" element={<FutureSimulator />} />
       <Route path="/admin" element={<AdminPanel />} />
+      <Route path="/cuestionario-vocacional" element={<CareerQuiz />} />
+      <Route path="/ia-cecyte" element={<CecyteAI />} />
     </Routes>
   );
 }
