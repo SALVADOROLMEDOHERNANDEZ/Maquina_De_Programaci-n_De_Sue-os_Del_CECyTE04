@@ -97,7 +97,7 @@ export default function LandingPage() {
           <div className="w-12 h-12 md:w-16 md:h-16 rounded-xl flex items-center justify-center">
             <img src={Logo} alt="Logo" className="w-full h-auto"/>
           </div>
-          <span className=" text-lg sm:text-xl md:text-2xl font-bold font-['Syne'] tracking-tight text-center md:text-left">Maquina de Programación de sueños del CECyTE 04 - MPSCECyTE 04</span>
+          <span className=" text-lg sm:text-xl md:text-2xl font-bold font-['Syne'] tracking-tight text-center md:text-left">Maquina de Programación de Sueños del CECyTE 04 - MPSCECyTE 04</span>
         </motion.div>
 
         <motion.div 
@@ -327,7 +327,7 @@ export default function LandingPage() {
           <div className="flex items-center gap-2">
             <img src={Logo} alt="Logo" className="w-7 h-6"/>
             <span className="text-sm text-white/50">
-              Maquina de Programación de sueños del CECyTE 04 - MPSCECyTE 04
+              Maquina de Programación de Sueños del CECyTE 04 - MPSCECyTE 04
             </span>
           </div>
           <div className="flex items-center gap-4">

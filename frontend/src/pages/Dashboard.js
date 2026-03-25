@@ -125,7 +125,7 @@ export default function Dashboard() {
 
       {/* Texto adaptable */}
       <span className="text-base sm:text-lg md:text-xl font-bold font-['Syne'] tracking-tight text-center sm:text-left">
-        Maquina de Programación de sueños del CECyTE 04 - MPSCECyTE 04
+        Maquina de Programación de Sueños del CECyTE 04 - MPSCECyTE 04
       </span>
     </div>
 
