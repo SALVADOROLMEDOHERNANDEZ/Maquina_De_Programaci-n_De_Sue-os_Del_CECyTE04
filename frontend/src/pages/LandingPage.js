@@ -3,13 +3,18 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
-<<<<<<< HEAD
-import { Sparkles, Cpu, GraduationCap, MapPin, ArrowRight, Play } from 'lucide-react';
+import {
+  Sparkles,
+  Cpu,
+  GraduationCap,
+  MapPin,
+  ArrowRight,
+  Play,
+  Brain,
+  Compass
+} from 'lucide-react';
 import Logo from '../assets/Logo/g6.png'; // o logo.svg
-=======
-import { Sparkles, Cpu, GraduationCap, MapPin, ArrowRight, Play, Brain, Compass } from 'lucide-react';
 
->>>>>>> f001994eb1bf115dc43a148ae0666546184d7de0
 // Feature Card Component
 function FeatureCard({ icon: Icon, title, description, color, delay }) {
   return (
