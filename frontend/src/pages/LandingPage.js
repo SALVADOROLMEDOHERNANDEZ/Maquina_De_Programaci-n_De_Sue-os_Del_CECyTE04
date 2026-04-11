@@ -11,7 +11,8 @@ import {
   ArrowRight,
   Play,
   Brain,
-  Compass
+  Compass,
+  Film
 } from 'lucide-react';
 import Logo from '../assets/Logo/g6.png'; // o logo.svg
 
@@ -88,27 +89,30 @@ export default function LandingPage() {
       <div className="absolute inset-0 grid-bg opacity-50 pointer-events-none" />
 
       {/* Navigation */}
-      <nav className="relative z-10 flex flex-col md:flex-row items-center justify-between px-6 md:px-12 lg:px-24 py-6 gap-4">
+      <nav className="relative z-10 flex flex-col sm:flex-row items-center justify-between px-6 md:px-12 lg:px-24 py-5 gap-4">
         <motion.div 
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
-          className="flex items-center gap-3"
+          className="flex items-center gap-3 min-w-[220px]"
         >
-          <div className="w-12 h-12 md:w-16 md:h-16 rounded-xl flex items-center justify-center">
-            <img src={Logo} alt="Logo" className="w-full h-auto"/>
+          <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl flex items-center justify-center bg-white/5 border border-white/10">
+            <img src={Logo} alt="Logo CECyTE" className="w-10 h-10 md:w-12 md:h-12 object-contain" />
           </div>
-          <span className=" text-lg sm:text-xl md:text-2xl font-bold font-['Syne'] tracking-tight text-center md:text-left">Maquina de Programación de Sueños del CECyTE 04 - MPSCECyTE 04</span>
+          <div className="text-left">
+            <span className="block text-base sm:text-lg md:text-xl font-semibold font-['Syne'] tracking-tight text-white">Máquina de Programación de Sueños</span>
+            <span className="block text-sm sm:text-base text-white/60">CECyTE 04 - MPSCECyTE 04</span>
+          </div>
         </motion.div>
 
         <motion.div 
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
-          className="flex items-center gap-4"
+          className="flex flex-wrap items-center justify-end gap-3"
         >
           <Button
             variant="ghost"
             onClick={() => navigate('/cuestionario-vocacional')}
-            className="text-white/70 hover:text-white hover:bg-white/5 hidden md:flex"
+            className="text-white/70 hover:text-white hover:bg-white/5 rounded-full px-4 py-3 text-sm hidden md:inline-flex"
             data-testid="nav-quiz-btn"
           >
             <Compass className="w-4 h-4 mr-2" />
@@ -117,7 +121,7 @@ export default function LandingPage() {
           <Button
             variant="ghost"
             onClick={() => navigate('/ia-cecyte')}
-            className="text-white/70 hover:text-white hover:bg-white/5 hidden md:flex"
+            className="text-white/70 hover:text-white hover:bg-white/5 rounded-full px-4 py-3 text-sm hidden md:inline-flex"
             data-testid="nav-ai-btn"
           >
             <Brain className="w-4 h-4 mr-2" />
@@ -126,14 +130,23 @@ export default function LandingPage() {
           <Button
             variant="ghost"
             onClick={() => navigate('/tour')}
-            className="text-white/70 hover:text-white hover:bg-white/5"
+            className="text-white/70 hover:text-white hover:bg-white/5 rounded-full px-4 py-3 text-sm"
             data-testid="nav-tour-btn"
           >
             Tour Virtual
           </Button>
           <Button
+            variant="ghost"
+            onClick={() => navigate('/galeria-multimedia')}
+            className="menu-pill rounded-full px-5 py-3 text-sm hidden lg:inline-flex"
+            data-testid="nav-gallery-btn"
+          >
+            <Film className="w-4 h-4 text-[#ff7c9c]" />
+            Publicaciones
+          </Button>
+          <Button
             onClick={handleGetStarted}
-            className="btn-primary rounded-full px-6"
+            className="menu-pill rounded-full px-5 py-3 text-sm"
             data-testid="nav-login-btn"
           >
             {isAuthenticated ? 'Dashboard' : 'Iniciar'}
@@ -142,16 +155,16 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="relative z-10 container-cyber pt-16 md:pt-24 pb-32">
+      <section className="relative z-10 container-cyber pt-16 md:pt-24 pb-32 hero-bg">
         <div className="max-w-4xl mx-auto text-center">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 text-sm text-white/70 mb-6">
+            <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-[#7c3aed]/20 text-sm text-white/70 mb-6">
               <Sparkles className="w-4 h-4 text-[#ccff00]" />
-              Experiencia Futurista con IA
+              Experiencia CECyTE 04 con IA
             </span>
           </motion.div>
 
@@ -161,10 +174,10 @@ export default function LandingPage() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="text-4xl sm:text-5xl lg:text-7xl font-['Syne'] font-extrabold leading-tight mb-6"
           >
-            <span className="text-white">Programa tus</span>
+            <span className="text-white">Construye tu</span>
             <br />
-            <span className="bg-gradient-to-r from-[#00f0ff] via-[#ccff00] to-[#7c3aed] bg-clip-text text-transparent">
-              Sueños del Futuro
+            <span className="bg-gradient-to-r from-[#7c3aed] via-[#ccff00] to-[#ff8c00] bg-clip-text text-transparent text-glow-green">
+              Futuro CECyTE
             </span>
           </motion.h1>
 

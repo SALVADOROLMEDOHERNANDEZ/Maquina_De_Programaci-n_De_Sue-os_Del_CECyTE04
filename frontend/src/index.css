@@ -11,21 +11,21 @@
   --card-foreground: 214 32% 91%;
   --popover: 220 20% 2%;
   --popover-foreground: 214 32% 91%;
-  --primary: 72 100% 50%;
+  --primary: 120 100% 50%;
   --primary-foreground: 0 0% 0%;
-  --secondary: 263 84% 58%;
-  --secondary-foreground: 214 32% 91%;
-  --accent: 186 100% 50%;
-  --accent-foreground: 0 0% 0%;
+  --secondary: 30 100% 50%;
+  --secondary-foreground: 0 0% 0%;
+  --accent: 270 100% 50%;
+  --accent-foreground: 214 32% 91%;
   --muted: 217 33% 17%;
   --muted-foreground: 215 20% 65%;
   --destructive: 339 100% 50%;
   --destructive-foreground: 214 32% 91%;
   --border: 217 33% 17%;
   --input: 217 33% 17%;
-  --ring: 186 100% 50%;
+  --ring: 120 100% 50%;
   --radius: 0.75rem;
-  --success: 154 100% 50%;
+  --success: 120 100% 50%;
 }
 
 * {
@@ -40,7 +40,10 @@ html {
 
 body {
   font-family: 'Space Grotesk', sans-serif;
-  background-color: #020408;
+  background: radial-gradient(circle at top right, rgba(128, 0, 255, 0.18), transparent 22%),
+              radial-gradient(circle at bottom left, rgba(0, 255, 0, 0.16), transparent 18%),
+              radial-gradient(circle at 15% 15%, rgba(255, 128, 0, 0.12), transparent 16%),
+              linear-gradient(180deg, #020408 0%, #050712 35%, #09061a 100%);
   color: #e2e8f0;
   min-height: 100vh;
   overflow-x: hidden;
@@ -108,46 +111,65 @@ code, .mono {
 }
 
 .glass-card {
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-  transition: all 0.5s ease;
+  background: rgba(5, 8, 24, 0.75);
+  backdrop-filter: blur(26px);
+  -webkit-backdrop-filter: blur(26px);
+  border: 1px solid rgba(124, 58, 237, 0.18);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
+  transition: all 0.4s ease;
 }
 
 .glass-card:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(0, 255, 0, 0.25);
   transform: translateY(-2px);
 }
 
-/* Neon glow effects */
-.neon-cyan {
-  filter: drop-shadow(0 0 10px rgba(0, 240, 255, 0.5));
+.hero-bg {
+  background: radial-gradient(circle at 15% 20%, rgba(128, 0, 255, 0.18), transparent 20%),
+              radial-gradient(circle at 85% 10%, rgba(0, 255, 0, 0.14), transparent 16%),
+              radial-gradient(circle at 75% 78%, rgba(255, 128, 0, 0.12), transparent 18%),
+              linear-gradient(180deg, rgba(2, 4, 8, 0.85), rgba(5, 8, 24, 0.95));
+  position: relative;
+  overflow: hidden;
 }
 
-.neon-lime {
-  filter: drop-shadow(0 0 10px rgba(204, 255, 0, 0.5));
+.hero-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 35%),
+              radial-gradient(circle at 30% 10%, rgba(0, 255, 0, 0.06), transparent 18%);
+  pointer-events: none;
+}
+
+
+/* Neon glow effects */
+.neon-green {
+  filter: drop-shadow(0 0 10px rgba(0, 255, 0, 0.5));
+}
+
+.neon-orange {
+  filter: drop-shadow(0 0 10px rgba(255, 128, 0, 0.5));
 }
 
 .neon-purple {
-  filter: drop-shadow(0 0 10px rgba(124, 58, 237, 0.5));
+  filter: drop-shadow(0 0 10px rgba(128, 0, 255, 0.5));
 }
 
 /* Button styles */
 .btn-primary {
-  background-color: #ccff00;
+  background-color: #00ff00;
   color: #000;
   font-weight: 700;
   letter-spacing: -0.01em;
-  box-shadow: 0 0 20px rgba(204, 255, 0, 0.3);
+  box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
   transition: all 0.3s ease;
 }
 
 .btn-primary:hover {
-  background-color: #b3e600;
+  background-color: #00e600;
   transform: scale(1.05);
-  box-shadow: 0 0 30px rgba(204, 255, 0, 0.5);
+  box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
 }
 
 .btn-secondary {
@@ -159,9 +181,9 @@ code, .mono {
 }
 
 .btn-secondary:hover {
-  border-color: #00f0ff;
-  color: #00f0ff;
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+  border-color: #00ff00;
+  color: #00ff00;
+  box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
 }
 
 /* Grid lines background */
@@ -174,7 +196,7 @@ code, .mono {
 
 /* Hero glow */
 .hero-glow {
-  background: radial-gradient(circle at 50% 50%, rgba(124, 58, 237, 0.15), transparent 70%);
+  background: radial-gradient(circle at 50% 50%, rgba(128, 0, 255, 0.15), transparent 70%);
 }
 
 /* Holographic effect */
@@ -187,7 +209,7 @@ code, .mono {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(to top, rgba(0, 240, 255, 0.05), transparent);
+  background: linear-gradient(to top, rgba(0, 255, 0, 0.05), transparent);
   opacity: 0;
   transition: opacity 0.3s ease;
 }
@@ -206,8 +228,8 @@ code, .mono {
 }
 
 .input-cyber:focus {
-  border-color: #00f0ff;
-  box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.1);
+  border-color: #00ff00;
+  box-shadow: 0 0 0 2px rgba(0, 255, 0, 0.1);
   outline: none;
 }
 

@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import MediaManager from '../components/admin/MediaManager';
+import StatsDashboard from '../components/admin/StatsDashboard';
 import { 
   Shield, 
   Upload, 
@@ -17,7 +19,9 @@ import {
   Eye,
   FileUp,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  BarChart3,
+  Film
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -43,7 +47,7 @@ export default function AdminPanel() {
   // Tarjetas
   const [tarjetaPositions, setTarjetaPositions] = useState([]);
   const [especialidades, setEspecialidades] = useState([]);
-  const [activeTab, setActiveTab] = useState('models');
+  const [activeTab, setActiveTab] = useState('stats');
 
   const loadData = useCallback(async () => {
     try {
@@ -368,12 +372,24 @@ export default function AdminPanel() {
 
       {/* Tabs */}
       <div className="container-cyber py-6">
-        <div className="flex gap-2 mb-8">
+        <div className="flex gap-2 mb-8 flex-wrap">
+          <Button
+            onClick={() => setActiveTab('stats')}
+            className={`rounded-xl ${activeTab === 'stats' ? 'btn-primary' : 'btn-secondary'}`}
+          >
+            <BarChart3 className="w-4 h-4 mr-2" /> Estadísticas
+          </Button>
           <Button
             onClick={() => setActiveTab('models')}
             className={`rounded-xl ${activeTab === 'models' ? 'btn-primary' : 'btn-secondary'}`}
           >
             <Box className="w-4 h-4 mr-2" /> Modelos 3D
+          </Button>
+          <Button
+            onClick={() => setActiveTab('multimedia')}
+            className={`rounded-xl ${activeTab === 'multimedia' ? 'btn-primary' : 'btn-secondary'}`}
+          >
+            <Film className="w-4 h-4 mr-2" /> Multimedia
           </Button>
           <Button
             onClick={() => setActiveTab('tarjetas')}
@@ -521,6 +537,20 @@ export default function AdminPanel() {
                 </div>
               )}
             </motion.div>
+          </div>
+        )}
+
+        {/* Stats Tab */}
+        {activeTab === 'stats' && (
+          <div className="space-y-6">
+            <StatsDashboard />
+          </div>
+        )}
+
+        {/* Multimedia Tab */}
+        {activeTab === 'multimedia' && (
+          <div>
+            <MediaManager onDataChange={loadData} />
           </div>
         )}
 

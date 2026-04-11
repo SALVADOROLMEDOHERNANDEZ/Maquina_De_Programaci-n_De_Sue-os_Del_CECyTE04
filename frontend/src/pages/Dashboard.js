@@ -14,7 +14,8 @@ import {
   GraduationCap,
   Image,
   Clock,
-  Shield
+  Shield,
+  Film
 } from 'lucide-react';
 import Logo from '../assets/Logo/g6.png'; // o logo.svg
 
@@ -140,6 +141,14 @@ export default function Dashboard() {
           Admin
         </Button>
       )}
+      <Button
+        variant="ghost"
+        onClick={() => navigate('/galeria-multimedia')}
+        className="menu-pill hidden md:inline-flex"
+      >
+        <Film className="w-4 h-4 text-[#ff7c9c]" />
+        Publicaciones
+      </Button>
       <div className="flex items-center gap-3">
         <Avatar className="w-10 h-10 border-2 border-[#00f0ff]/30">
           <AvatarImage src={user.picture} alt={user.name} />
@@ -239,6 +248,26 @@ export default function Dashboard() {
             </p>
             <div className="flex items-center gap-2 text-[#7c3aed] text-sm font-medium">
               Ver todas <ArrowRight className="w-4 h-4" />
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            className="glass-card rounded-2xl p-6 cursor-pointer group"
+            onClick={() => navigate('/galeria-multimedia')}
+            data-testid="dashboard-gallery-card"
+          >
+            <div className="w-14 h-14 rounded-xl bg-[#ff7c9c]/10 border border-[#ff7c9c]/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+              <Film className="w-7 h-7 text-[#ff7c9c]" />
+            </div>
+            <h3 className="text-xl font-bold font-['Syne'] mb-2">Publicaciones</h3>
+            <p className="text-white/50 text-sm mb-4">
+              Noticias, fotos y videos del campus en formato moderno
+            </p>
+            <div className="flex items-center gap-2 text-[#ff7c9c] text-sm font-medium">
+              Ir a publicaciones <ArrowRight className="w-4 h-4" />
             </div>
           </motion.div>
         </div>

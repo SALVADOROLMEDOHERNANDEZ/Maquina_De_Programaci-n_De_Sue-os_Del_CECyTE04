@@ -23,6 +23,25 @@ import {
 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
+//Controles
+function useKeyboard() {
+  const keys = useRef({});
+
+  useEffect(() => {
+    const down = (e) => (keys.current[e.key.toLowerCase()] = true);
+    const up = (e) => (keys.current[e.key.toLowerCase()] = false);
+
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
+  return keys;
+}
 
 // Tarjeta 3D de Especialidad
 function SpecialtyCard3D({ especialidad, position, isSelected, onSelect }) {
@@ -88,37 +107,168 @@ function SpecialtyCard3D({ especialidad, position, isSelected, onSelect }) {
     </group>
   );
 }
-
 // Avatar simple
-function Avatar({ position, color }) {
-  const groupRef = useRef();
-  
-  useFrame((state) => {
-    if (groupRef.current) {
-      groupRef.current.position.y = position[1] + Math.sin(state.clock.elapsedTime * 2) * 0.04;
+const Avatar3D = React.forwardRef(({ url }, ref) => {
+  const [model, setModel] = useState();
+
+  useEffect(() => {
+    const load = async () => {
+      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader');
+      const { MeshoptDecoder } = await import('three/examples/jsm/libs/meshopt_decoder.module.js');
+
+      const loader = new GLTFLoader();
+      loader.setMeshoptDecoder(MeshoptDecoder);
+
+      loader.load(url, (gltf) => {
+  const scene = gltf.scene;
+
+  // 🔥 escala
+  scene.scale.set(1.5, 1.5, 1.5);
+
+  // 🔥 crear contenedor (MUY IMPORTANTE)
+  const group = new THREE.Group();
+  group.add(scene);
+
+  // 🔥 calcular tamaño
+  const box = new THREE.Box3().setFromObject(scene);
+
+  // 🔥 levantar modelo correctamente
+  scene.position.y = -box.min.y;
+
+  // 🔥 guardas el GROUP (no el scene)
+  setModel(group);
+});
+    };
+
+    load();
+  }, [url]);
+
+  if (!model) return null;
+
+  return <primitive ref={ref} object={model} />;
+});
+//Movimiento del Avatar
+function Player({ url, playerRef, mobileControls }) {
+  const keys = useKeyboard();
+  const lightRef = useRef();
+
+  const velocityY = useRef(0);
+  const isJumping = useRef(false);
+
+  useFrame(() => {
+    if (!playerRef.current) return;
+
+    const speed = 0.3;
+
+    // 🎮 CONTROLES (PC + MÓVIL)
+    const forward = keys.current['arrowup'] || mobileControls?.forward;
+    const back = keys.current['arrowdown'] || mobileControls?.back;
+    const left = keys.current['arrowleft'] || mobileControls?.left;
+    const right = keys.current['arrowright'] || mobileControls?.right;
+
+    // 🎯 DIRECCIÓN
+    let dirX = 0;
+    let dirZ = 0;
+
+    if (forward) dirZ -= 1;
+    if (back) dirZ += 1;
+    if (left) dirX -= 1;
+    if (right) dirX += 1;
+
+    // 🎯 ROTACIÓN SUAVE
+    if (dirX !== 0 || dirZ !== 0) {
+      const angle = Math.atan2(dirX, dirZ);
+
+      playerRef.current.rotation.y = THREE.MathUtils.lerp(
+        playerRef.current.rotation.y,
+        angle,
+        0.2
+      );
+    }
+
+    if (forward) playerRef.current.position.z -= speed;
+    if (back) playerRef.current.position.z += speed;
+    if (left) playerRef.current.position.x -= speed;
+    if (right) playerRef.current.position.x += speed;
+
+    // 🟢 SALTO
+    if ((keys.current[' '] || mobileControls?.jump) && !isJumping.current) {
+      velocityY.current = 0.5;
+      isJumping.current = true;
+    }
+
+    // gravedad
+    velocityY.current -= 0.02;
+    playerRef.current.position.y += velocityY.current;
+
+    // suelo
+    if (playerRef.current.position.y <= 0) {
+      playerRef.current.position.y = 0;
+      velocityY.current = 0;
+      isJumping.current = false;
+    }
+
+    // 🔒 LIMITES
+    const LIMIT = 60;
+    playerRef.current.position.x = Math.max(-LIMIT, Math.min(LIMIT, playerRef.current.position.x));
+    playerRef.current.position.z = Math.max(-LIMIT, Math.min(LIMIT, playerRef.current.position.z));
+
+    // 💡 LUZ SIGUE AL AVATAR
+    if (lightRef.current) {
+      lightRef.current.position.set(
+        playerRef.current.position.x,
+        playerRef.current.position.y + 3,
+        playerRef.current.position.z
+      );
     }
   });
 
   return (
-    <group ref={groupRef} position={position}>
-      <mesh position={[0, 0.65, 0]}>
-        <capsuleGeometry args={[0.35, 0.7, 10, 18]} />
-        <meshStandardMaterial color={color} roughness={0.5} metalness={0.3} />
-      </mesh>
-      <mesh position={[0, 1.45, 0]}>
-        <sphereGeometry args={[0.3, 18, 18]} />
-        <meshStandardMaterial color="#FFDFC4" roughness={0.8} />
-      </mesh>
-      <mesh position={[-0.1, 1.5, 0.25]}>
-        <sphereGeometry args={[0.05, 10, 10]} />
-        <meshBasicMaterial color="#222" />
-      </mesh>
-      <mesh position={[0.1, 1.5, 0.25]}>
-        <sphereGeometry args={[0.05, 10, 10]} />
-        <meshBasicMaterial color="#222" />
-      </mesh>
-    </group>
+    <>
+      {/* 💡 LUZ DINÁMICA */}
+      <pointLight ref={lightRef} intensity={2} />
+
+      {/* 👤 AVATAR */}
+      <Avatar3D ref={playerRef} url={url} />
+    </>
   );
+}
+//Vision
+function CameraFollow({ target }) {
+  const { camera } = useThree();
+  const isMouseDown = useRef(false);
+
+  useEffect(() => {
+    const down = () => (isMouseDown.current = true);
+    const up = () => (isMouseDown.current = false);
+
+    window.addEventListener("mousedown", down);
+    window.addEventListener("mouseup", up);
+
+    return () => {
+      window.removeEventListener("mousedown", down);
+      window.removeEventListener("mouseup", up);
+    };
+  }, []);
+
+  useFrame(() => {
+    if (!target.current) return;
+
+    const pos = target.current.position;
+
+    // 🎯 cámara sigue al jugador
+    camera.position.lerp(
+      new THREE.Vector3(pos.x + 10, pos.y + 8, pos.z + 10),
+      0.1
+    );
+
+    // 🔥 SOLO mira al jugador si NO estás moviendo el mouse
+    if (!isMouseDown.current) {
+      camera.lookAt(pos);
+    }
+  });
+
+  return null;
 }
 
 // Monumento central
@@ -197,7 +347,10 @@ function LoadedModel({ url, onError }) {
         
         if (fileExtension === 'gltf' || fileExtension === 'glb') {
           const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader');
-          loader = new GLTFLoader();
+          const { MeshoptDecoder } = await import('three/examples/jsm/libs/meshopt_decoder.module.js');
+
+          const loader = new GLTFLoader();
+          loader.setMeshoptDecoder(MeshoptDecoder);
           
           const gltf = await new Promise((resolve, reject) => {
             loader.load(
@@ -306,7 +459,7 @@ function LoadedModel({ url, onError }) {
 }
 
 // Escena principal
-function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrl, onModelError }) {
+function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrl, onModelError, avatarUrl,mobileControls}) {
   const defaultPositions = useMemo(() => [
     { x: -20, y: 2, z: 14 },
     { x: 20, y: 2, z: 14 },
@@ -314,18 +467,46 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
     { x: -16, y: 2, z: -14 },
     { x: 16, y: 2, z: -14 },
   ], []);
+  const playerRef = useRef();
+  const lastTriggeredRef = useRef(null);
+  
+  useFrame(() => {
+  if (!playerRef.current) return;
 
+  especialidades.forEach((esp, index) => {
+    const savedPos = tarjetaPositions.find(p => p.especialidad_id === esp.especialidad_id);
+    const pos = savedPos?.position || defaultPositions[index];
+
+    const dx = playerRef.current.position.x - pos.x;
+    const dz = playerRef.current.position.z - pos.z;
+
+    const distance = Math.sqrt(dx * dx + dz * dz);
+
+    if (distance < 3) {
+      // 🔒 evita repetir
+      if (lastTriggeredRef.current !== esp.especialidad_id) {
+        lastTriggeredRef.current = esp.especialidad_id;
+        onSelectEspecialidad(esp.especialidad_id);
+      }
+    } else {
+      // 🔓 reset cuando te alejas
+      if (lastTriggeredRef.current === esp.especialidad_id) {
+        lastTriggeredRef.current = null;
+      }
+    }
+  });
+});
   return (
     <>
       <color attach="background" args={['#020408']} />
       <fog attach="fog" args={['#020408', 70, 200]} />
       
-      <ambientLight intensity={0.3} />
-      <pointLight position={[0, 70, 0]} intensity={2.5} color="#ffffff" />
-      <pointLight position={[-45, 30, 30]} intensity={1} color="#00f0ff" />
-      <pointLight position={[45, 30, 30]} intensity={1} color="#ccff00" />
-      <pointLight position={[0, 30, -45]} intensity={1} color="#7c3aed" />
-      
+      <ambientLight intensity={1.2} />
+      <directionalLight 
+        position={[10, 15, 10]} 
+        intensity={2}
+      />
+      <pointLight position={[0, 5, 5]} intensity={2} />
       <Stars radius={200} depth={60} count={3000} factor={4} saturation={0} fade speed={1} />
       
       <Ground />
@@ -346,24 +527,30 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
           <SpecialtyCard3D
             key={esp.especialidad_id}
             especialidad={esp}
-            position={[pos.x, pos.y, pos.z]}
+            position={[pos.x, pos.y+3, pos.z]}
             isSelected={selectedEspecialidad === esp.especialidad_id}
             onSelect={() => onSelectEspecialidad(esp.especialidad_id)}
           />
         );
       })}
-      
-      <Avatar position={[0, 0, 10]} color="#1E3A5F" />
-      
+      {avatarUrl && (
+        <Player 
+          playerRef={playerRef}
+          url={avatarUrl}
+          mobileControls={mobileControls} 
+        />
+      )}
+      <CameraFollow target={playerRef} />
       <OrbitControls
         enableDamping
         dampingFactor={0.05}
-        minDistance={10}
-        maxDistance={100}
-        maxPolarAngle={Math.PI / 2.1}
-        autoRotate
-        autoRotateSpeed={0.2}
-      />
+        minDistance={5}
+        maxDistance={80}
+        maxPolarAngle={Math.PI / 2}
+        enablePan={true}
+        enableZoom={true}
+        enableRotate={true}
+        />
     </>
   );
 }
@@ -444,7 +631,15 @@ export default function VirtualTour() {
   const [activeModelUrl, setActiveModelUrl] = useState(null);
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState(null);
-
+  const [avatarUrl, setAvatarUrl] = useState(null); // 🔥 NO OLVIDES ESTO
+  const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
+  const [mobileControls, setMobileControls] = useState({
+    forward: false,
+    back: false,
+    left: false,
+    right: false,
+    jump: false
+  });
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -453,10 +648,10 @@ export default function VirtualTour() {
           fetch(`${API_URL}/api/tarjetas/positions`),
           fetch(`${API_URL}/api/models/active`)
         ]);
-        
+
         if (espRes.ok) setEspecialidades(await espRes.json());
         if (posRes.ok) setTarjetaPositions(await posRes.json());
-        
+
         if (modelRes.ok) {
           const modelData = await modelRes.json();
           if (modelData && modelData.filename) {
@@ -465,15 +660,35 @@ export default function VirtualTour() {
             setModelError(null);
           }
         }
-        
+
+        // 🔥 SOLO UN TRY PARA EL USUARIO
         try {
-          const userRes = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
+          const userRes = await fetch(`${API_URL}/api/auth/me`, {
+            credentials: 'include'
+          });
+
           if (userRes.ok) {
             const user = await userRes.json();
+
             setUserName(user.name?.split(' ')[0] || 'Visitante');
+
+            // 🎯 LÓGICA DEL AVATAR
+            const sexo = user.sexo?.toLowerCase();
+
+            if (sexo === 'masculino') {
+              setAvatarUrl(`${API_URL}/api/models/file/avatar_male.glb`);
+            } else if (sexo === 'femenino') {
+              setAvatarUrl(`${API_URL}/api/models/file/avatar_female.glb`);
+            } else {
+              setAvatarUrl(`${API_URL}/api/models/file/avatar_default.glb`);
+            }
+
+            console.log("Sexo:", sexo);
           }
-        } catch (e) {}
-        
+        } catch (e) {
+          console.error("Error usuario:", e);
+        }
+
       } catch (error) {
         console.error('Error loading data:', error);
       } finally {
@@ -547,6 +762,8 @@ export default function VirtualTour() {
                 tarjetaPositions={tarjetaPositions}
                 activeModelUrl={activeModelUrl}
                 onModelError={handleModelError}
+                avatarUrl={avatarUrl}
+                mobileControls={mobileControls}
               />
             </Suspense>
           </Canvas>

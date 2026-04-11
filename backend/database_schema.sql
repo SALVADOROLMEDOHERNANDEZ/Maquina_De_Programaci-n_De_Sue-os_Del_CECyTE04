@@ -24,32 +24,44 @@ CREATE TABLE IF NOT EXISTS users (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ═══════════════════════════════════════════════════════════════
--- TABLA: user_sessions (Sesiones de usuarios)
+-- TABLA: user_sessions (Sesiones de usuarios - UNA por usuario)
 -- ═══════════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS user_sessions (
     session_id VARCHAR(100) PRIMARY KEY,
-    user_id VARCHAR(50) NOT NULL,
+    user_id VARCHAR(50) NOT NULL UNIQUE,
     session_token VARCHAR(255) NOT NULL UNIQUE,
     is_admin BOOLEAN DEFAULT FALSE,
     expires_at TIMESTAMP NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     INDEX idx_session_token (session_token),
-    INDEX idx_user_id (user_id),
-    INDEX idx_expires_at (expires_at)
+    INDEX idx_expires_at (expires_at),
+    INDEX idx_updated_at (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ═══════════════════════════════════════════════════════════════
--- TABLA: admin_sessions (Sesiones de administradores)
+-- TABLA: admin_sessions (Sesiones de administradores - UNA por admin)
 -- ═══════════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS admin_sessions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     token VARCHAR(255) NOT NULL UNIQUE,
-    username VARCHAR(100) NOT NULL,
+    username VARCHAR(100) NOT NULL UNIQUE,
     expires_at TIMESTAMP NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_token (token),
     INDEX idx_expires_at (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ═══════════════════════════════════════════════════════════════
+-- TABLA: session_cleanup_log (Log de limpieza automática de sesiones)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS session_cleanup_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    sessions_deleted INT DEFAULT 0,
+    cleaned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_cleaned_at (cleaned_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ═══════════════════════════════════════════════════════════════
@@ -123,7 +135,42 @@ CREATE TABLE IF NOT EXISTS tarjeta_positions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ═══════════════════════════════════════════════════════════════
--- INSERTAR DATOS INICIALES: Especialidades (ACTUALIZADAS)
+-- PROCEDIMIENTO ALMACENADO: Limpiar sesiones expiradas
+-- ═══════════════════════════════════════════════════════════════
+DELIMITER ;;
+
+CREATE PROCEDURE IF NOT EXISTS cleanup_expired_sessions()
+BEGIN
+    DECLARE deleted_user_sessions INT DEFAULT 0;
+    DECLARE deleted_admin_sessions INT DEFAULT 0;
+    
+    -- Eliminar sesiones de usuarios expiradas
+    DELETE FROM user_sessions 
+    WHERE expires_at < NOW();
+    SET deleted_user_sessions = ROW_COUNT();
+    
+    -- Eliminar sesiones de admin expiradas
+    DELETE FROM admin_sessions 
+    WHERE expires_at < NOW();
+    SET deleted_admin_sessions = ROW_COUNT();
+    
+    -- Registrar limpieza
+    INSERT INTO session_cleanup_log (sessions_deleted, cleaned_at) 
+    VALUES (deleted_user_sessions + deleted_admin_sessions, NOW());
+END;;
+
+DELIMITER ;
+
+-- ═══════════════════════════════════════════════════════════════
+-- EVENTO: Ejecutar limpieza cada 6 horas
+-- ═══════════════════════════════════════════════════════════════
+DROP EVENT IF EXISTS cleanup_sessions_event;
+
+CREATE EVENT cleanup_sessions_event
+ON SCHEDULE EVERY 6 HOUR
+STARTS DATE_ADD(NOW(), INTERVAL 1 HOUR)
+DO
+    CALL cleanup_expired_sessions();
 -- Solo Programación y Mantenimiento Industrial
 -- ═══════════════════════════════════════════════════════════════
 INSERT INTO especialidades (especialidad_id, nombre, descripcion, habilidades, campo_laboral, posicion_3d, color, icono) VALUES
@@ -232,6 +279,31 @@ CREATE TABLE IF NOT EXISTS user_points (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ═══════════════════════════════════════════════════════════════
+-- TABLA: multimedia (Contenido multimedia del plantel)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS multimedia (
+    multimedia_id VARCHAR(50) PRIMARY KEY,
+    tipo ENUM('video', 'foto', 'publicacion') NOT NULL,
+    titulo VARCHAR(255) NOT NULL,
+    descripcion TEXT,
+    archivo_url VARCHAR(500) NOT NULL,
+    thumbnail_url VARCHAR(500),
+    tags JSON DEFAULT NULL,
+    categoria VARCHAR(100) DEFAULT 'general',
+    uploaded_by VARCHAR(50) NOT NULL,
+    visible BOOLEAN DEFAULT TRUE,
+    vistas INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (uploaded_by) REFERENCES users(user_id) ON DELETE CASCADE,
+    INDEX idx_tipo (tipo),
+    INDEX idx_categoria (categoria),
+    INDEX idx_visible (visible),
+    INDEX idx_created_at (created_at),
+    INDEX idx_uploaded_by (uploaded_by)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ═══════════════════════════════════════════════════════════════
 -- INSERTAR INSIGNIAS INICIALES
 -- ═══════════════════════════════════════════════════════════════
 INSERT INTO badges (badge_id, nombre, descripcion, icono, color, puntos, categoria, requisito) VALUES
@@ -256,16 +328,45 @@ ON DUPLICATE KEY UPDATE nombre=VALUES(nombre), descripcion=VALUES(descripcion);
 -- Collation: utf8mb4_unicode_ci
 -- Engine: InnoDB (para integridad referencial)
 -- 
--- Tablas creadas: 7
+-- STATUS: VERSIÓN 2.0 (Optimización de sesiones)
+-- CAMBIOS: 
+--   - UNIQUE constraint en user_id (user_sessions) - UNA sesión por usuario
+--   - UNIQUE constraint en username (admin_sessions) - UNA sesión por admin
+--   - Agregada tabla session_cleanup_log para auditoría
+--   - Procedimiento almacenado cleanup_expired_sessions()
+--   - Evento automático cleanup_sessions_event (cada 6 horas)
+--   - Agregado índice idx_updated_at para tracking de sesiones activas
+--
+-- Tablas creadas: 14
 -- - users: Usuarios del sistema
--- - user_sessions: Sesiones activas
--- - admin_sessions: Sesiones de admin
+-- - user_sessions: Sesiones activas (1 por usuario)
+-- - admin_sessions: Sesiones de admin (1 por admin)
+-- - session_cleanup_log: Log de limpiezas automáticas ✨ NUEVO
 -- - especialidades: Carreras disponibles
 -- - simulations: Simulaciones generadas
 -- - models_3d: Modelos 3D del plantel
 -- - tarjeta_positions: Posiciones en tour 3D
--- 
+-- - badges: Insignias del sistema
+-- - user_badges: Insignias obtenidas por usuarios
+-- - quiz_completions: Cuestionarios completados
+-- - contributions: Contribuciones al proyecto IA CECYTE
+-- - user_points: Puntos totales de usuarios
+-- - multimedia: Contenido multimedia del plantel
+--
+-- PROCEDIMIENTOS ALMACENADOS:
+-- - cleanup_expired_sessions(): Elimina sesiones expiradas
+--
+-- EVENTOS:
+-- - cleanup_sessions_event: Se ejecuta cada 6 horas automáticamente
+--
 -- Datos iniciales: 2 especialidades
 -- - Programación
 -- - Mantenimiento Industrial
+--
+-- NOTAS DE SEGURIDAD:
+-- 1. Las contraseñas de admin se almacenan hasheadas (SHA256) en env
+-- 2. Los session_tokens se generan con UUID v4
+-- 3. Las sesiones expiran: usuarios (7 días), admins (24 horas)
+-- 4. HTTPS + SameSite Cookie + HttpOnly obligatorios en producción
+-- 5. Limpieza automática previene acumulación de datos obsoletos
 -- ═══════════════════════════════════════════════════════════════

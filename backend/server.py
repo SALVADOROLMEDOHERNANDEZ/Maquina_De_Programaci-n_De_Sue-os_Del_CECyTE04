@@ -2,6 +2,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Response, Request, Backgr
 from fastapi.responses import JSONResponse, FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+from starlette.staticfiles import StaticFiles
 import aiomysql
 import os
 import logging
@@ -21,6 +22,9 @@ load_dotenv(ROOT_DIR / '.env')
 
 UPLOADS_DIR = ROOT_DIR / 'uploads' / 'models'
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+MULTIMEDIA_DIR = ROOT_DIR / 'uploads' / 'multimedia'
+MULTIMEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 # MySQL connection pool
 db_pool = None
@@ -43,6 +47,10 @@ async def get_db():
     return db_pool
 
 app = FastAPI(title="Máquina de Programación de Sueños - CECyTE 04")
+
+# Mount multimedia directory for serving uploaded files
+app.mount("/multimedia", StaticFiles(directory=str(MULTIMEDIA_DIR)), name="multimedia")
+
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -75,6 +83,20 @@ class SendPosterRequest(BaseModel):
     email: Optional[EmailStr] = None
     telefono: Optional[str] = None
     metodo: str
+
+class MultimediaRequest(BaseModel):
+    tipo: str  # 'video', 'foto', 'publicacion'
+    titulo: str
+    descripcion: Optional[str] = None
+    categoria: Optional[str] = "general"
+    tags: Optional[List[str]] = None
+
+class MultimediaUpdate(BaseModel):
+    titulo: Optional[str] = None
+    descripcion: Optional[str] = None
+    categoria: Optional[str] = None
+    tags: Optional[List[str]] = None
+    visible: Optional[bool] = None
 
 # Helper Functions
 async def get_current_user(request: Request) -> Optional[dict]:
@@ -205,11 +227,18 @@ async def process_session(request: Request, response: Response):
                 
                 session_token = session_data.get("session_token", f"session_{uuid.uuid4().hex}")
                 expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+                session_id = str(uuid.uuid4())
                 
-                await cursor.execute("DELETE FROM user_sessions WHERE user_id = %s", (user_id,))
+                # Usar ON DUPLICATE KEY UPDATE para evitar duplicados:
+                # Si el usuario ya tiene sesión, la actualiza reutilizando el mismo session_id
                 await cursor.execute(
-                    "INSERT INTO user_sessions (session_id, user_id, session_token, is_admin, expires_at, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (str(uuid.uuid4()), user_id, session_token, is_admin, expires_at, datetime.now(timezone.utc))
+                    """INSERT INTO user_sessions (session_id, user_id, session_token, is_admin, expires_at, created_at, updated_at) 
+                       VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                       ON DUPLICATE KEY UPDATE 
+                       session_token = VALUES(session_token),
+                       expires_at = VALUES(expires_at),
+                       updated_at = NOW()""",
+                    (session_id, user_id, session_token, is_admin, expires_at, datetime.now(timezone.utc))
                 )
         
         response.set_cookie(key="session_token", value=session_token, httponly=True, secure=True, samesite="none", path="/", max_age=7*24*60*60)
@@ -252,8 +281,15 @@ async def admin_login(data: AdminLogin, response: Response):
     pool = await get_db()
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
+            # Usar ON DUPLICATE KEY UPDATE para evitar duplicados:
+            # Si el admin ya tiene sesión, la actualiza en lugar de crear una nueva
             await cursor.execute(
-                "INSERT INTO admin_sessions (token, username, expires_at, created_at) VALUES (%s, %s, %s, %s)",
+                """INSERT INTO admin_sessions (token, username, expires_at, created_at, updated_at) 
+                   VALUES (%s, %s, %s, %s, NOW())
+                   ON DUPLICATE KEY UPDATE 
+                   token = VALUES(token),
+                   expires_at = VALUES(expires_at),
+                   updated_at = NOW()""",
                 (admin_token, data.username, expires_at, datetime.now(timezone.utc))
             )
     
@@ -267,6 +303,79 @@ async def check_admin(request: Request):
         return {"is_admin": True, "user": admin}
     except HTTPException:
         return {"is_admin": False}
+
+@api_router.get("/admin/statistics")
+async def get_admin_statistics(request: Request):
+    """Obtiene estadísticas del dashboard de administración"""
+    await require_admin(request)
+    
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                # Usuarios totales
+                await cursor.execute("SELECT COUNT(*) as total FROM users WHERE is_admin = FALSE")
+                users_count = (await cursor.fetchone())['total']
+                
+                # Contenido multimedia total
+                await cursor.execute("SELECT COUNT(*) as total FROM multimedia WHERE visible = TRUE")
+                multimedia_count = (await cursor.fetchone())['total']
+                
+                # Total de vistas en multimedia
+                await cursor.execute("SELECT COALESCE(SUM(vistas), 0) as total FROM multimedia")
+                total_views = (await cursor.fetchone())['total']
+                
+                # Simulaciones totales
+                await cursor.execute("SELECT COUNT(*) as total FROM simulations")
+                simulations_count = (await cursor.fetchone())['total']
+                
+                # Sesiones activas
+                await cursor.execute("SELECT COUNT(*) as total FROM user_sessions WHERE expires_at > NOW()")
+                active_sessions = (await cursor.fetchone())['total']
+                
+                # Modelos 3D activos
+                await cursor.execute("SELECT COUNT(*) as total FROM models_3d WHERE is_active = TRUE")
+                active_models = (await cursor.fetchone())['total']
+                
+                # Multimedia por tipo
+                await cursor.execute("""
+                    SELECT tipo, COUNT(*) as count 
+                    FROM multimedia 
+                    WHERE visible = TRUE
+                    GROUP BY tipo
+                """)
+                multimedia_by_type = {}
+                for row in await cursor.fetchall():
+                    multimedia_by_type[row['tipo']] = row['count']
+                
+                # Contribuciones pendientes
+                await cursor.execute("SELECT COUNT(*) as total FROM contributions WHERE estado = 'pendiente'")
+                pending_contributions = (await cursor.fetchone())['total']
+                
+                # Top usuarios por puntos
+                await cursor.execute("""
+                    SELECT u.name, up.puntos_totales 
+                    FROM user_points up
+                    JOIN users u ON u.user_id = up.user_id
+                    ORDER BY up.puntos_totales DESC
+                    LIMIT 5
+                """)
+                top_users = [{"name": row['name'], "puntos": row['puntos_totales']} for row in await cursor.fetchall()]
+        
+        return {
+            "users_total": users_count,
+            "multimedia_content": multimedia_count,
+            "total_views": total_views,
+            "simulations_total": simulations_count,
+            "active_sessions": active_sessions,
+            "active_3d_models": active_models,
+            "multimedia_by_type": multimedia_by_type,
+            "pending_contributions": pending_contributions,
+            "top_users": top_users
+        }
+    except Exception as e:
+        logger.error(f"Error obtaining statistics: {e}")
+        raise HTTPException(status_code=500, detail="Error al obtener estadísticas")
 
 # Simulation Endpoints
 @api_router.post("/simulation/generate-story")
@@ -968,6 +1077,270 @@ async def send_poster(data: SendPosterRequest):
             if not simulation:
                 raise HTTPException(status_code=404, detail="Simulation not found")
     return {"message": "Poster sending processed", "results": {"email": "not_configured", "whatsapp": "not_configured"}}
+
+# ═══════════════════════════════════════════════════════════════
+# MULTIMEDIA MANAGEMENT
+# ═══════════════════════════════════════════════════════════════
+
+@api_router.post("/admin/multimedia")
+async def upload_multimedia(
+    request: Request,
+    file: UploadFile = File(...),
+    tipo: str = Form(...),
+    titulo: str = Form(...),
+    descripcion: Optional[str] = Form(None),
+    categoria: Optional[str] = Form("general"),
+    tags: Optional[str] = Form(None)
+):
+    """Subir contenido multimedia (solo admin)"""
+    admin = await require_admin(request)
+    
+    try:
+        # Validar tipo
+        if tipo not in ['video', 'foto', 'publicacion']:
+            raise HTTPException(status_code=400, detail="Tipo de contenido no válido")
+        
+        # Validar archivo
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Nombre de archivo requerido")
+        
+        # Validar tamaño (máx 500MB)
+        content = await file.read()
+        if len(content) > 500 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Archivo muy grande (máx 500MB)")
+        
+        # Validar extensión según tipo
+        valid_extensions = {
+            'video': ['.mp4', '.webm', '.avi', '.mov', '.mkv'],
+            'foto': ['.jpg', '.jpeg', '.png', '.gif', '.webp'],
+            'publicacion': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.txt']
+        }
+        
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in valid_extensions.get(tipo, []):
+            raise HTTPException(status_code=400, detail=f"Formato no soportado para {tipo}")
+        
+        # Sanitizar nombre
+        multimedia_id = f"media_{uuid.uuid4().hex[:12]}"
+        safe_filename = f"{multimedia_id}{file_ext}"
+        file_path = MULTIMEDIA_DIR / safe_filename
+        
+        # Guardar archivo
+        async with aiofiles.open(file_path, 'wb') as f:
+            await f.write(content)
+        
+        # Obtener user_id del admin
+        user = await get_current_user(request)
+        user_id = user["user_id"] if user else admin.get("user_id", "admin")
+        
+        # Guardar en BD
+        tags_json = json.dumps(tags.split(',') if tags else [])
+        
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """INSERT INTO multimedia 
+                       (multimedia_id, tipo, titulo, descripcion, archivo_url, tags, categoria, uploaded_by, visible, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s)""",
+                    (multimedia_id, tipo, titulo, descripcion, f"/multimedia/{safe_filename}", 
+                     tags_json, categoria, user_id, datetime.now(timezone.utc))
+                )
+        
+        return {
+            "multimedia_id": multimedia_id,
+            "mensaje": "Contenido subido exitosamente",
+            "tipo": tipo,
+            "archivo": safe_filename
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Multimedia upload error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/admin/multimedia")
+async def list_multimedia(request: Request, tipo: Optional[str] = None, categoria: Optional[str] = None):
+    """Listar contenido multimedia (solo admin)"""
+    admin = await require_admin(request)
+    
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                query = "SELECT * FROM multimedia WHERE 1=1"
+                params = []
+                
+                if tipo:
+                    query += " AND tipo = %s"
+                    params.append(tipo)
+                
+                if categoria:
+                    query += " AND categoria = %s"
+                    params.append(categoria)
+                
+                query += " ORDER BY created_at DESC LIMIT 200"
+                
+                await cursor.execute(query, params)
+                multimedia_list = await cursor.fetchall()
+                
+                result = []
+                for item in multimedia_list:
+                    item_dict = dict(item)
+                    item_dict['tags'] = json.loads(item_dict.get('tags', '[]')) if item_dict.get('tags') else []
+                    result.append(item_dict)
+                
+                return result
+    
+    except Exception as e:
+        logger.error(f"List multimedia error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/admin/multimedia/{multimedia_id}")
+async def update_multimedia(request: Request, multimedia_id: str, data: MultimediaUpdate):
+    """Editar contenido multimedia (solo admin)"""
+    admin = await require_admin(request)
+    
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Verificar que existe
+                await cursor.execute("SELECT * FROM multimedia WHERE multimedia_id = %s", (multimedia_id,))
+                if not await cursor.fetchone():
+                    raise HTTPException(status_code=404, detail="Contenido no encontrado")
+                
+                # Actualizar campos
+                updates = []
+                params = []
+                
+                if data.titulo is not None:
+                    updates.append("titulo = %s")
+                    params.append(data.titulo)
+                
+                if data.descripcion is not None:
+                    updates.append("descripcion = %s")
+                    params.append(data.descripcion)
+                
+                if data.categoria is not None:
+                    updates.append("categoria = %s")
+                    params.append(data.categoria)
+                
+                if data.tags is not None:
+                    updates.append("tags = %s")
+                    params.append(json.dumps(data.tags))
+                
+                if data.visible is not None:
+                    updates.append("visible = %s")
+                    params.append(data.visible)
+                
+                if updates:
+                    updates.append("updated_at = %s")
+                    params.append(datetime.now(timezone.utc))
+                    params.append(multimedia_id)
+                    
+                    query = f"UPDATE multimedia SET {', '.join(updates)} WHERE multimedia_id = %s"
+                    await cursor.execute(query, params)
+        
+        return {"mensaje": "Contenido actualizado", "multimedia_id": multimedia_id}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update multimedia error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.delete("/admin/multimedia/{multimedia_id}")
+async def delete_multimedia(request: Request, multimedia_id: str):
+    """Eliminar contenido multimedia (solo admin)"""
+    admin = await require_admin(request)
+    
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                # Obtener archivo para eliminarlo
+                await cursor.execute("SELECT archivo_url FROM multimedia WHERE multimedia_id = %s", (multimedia_id,))
+                result = await cursor.fetchone()
+                
+                if not result:
+                    raise HTTPException(status_code=404, detail="Contenido no encontrado")
+                
+                # Eliminar archivo
+                if result['archivo_url']:
+                    try:
+                        file_path = MULTIMEDIA_DIR / Path(result['archivo_url']).name
+                        if file_path.exists():
+                            file_path.unlink()
+                    except Exception as e:
+                        logger.warning(f"Could not delete file: {e}")
+                
+                # Eliminar de BD
+                await cursor.execute("DELETE FROM multimedia WHERE multimedia_id = %s", (multimedia_id,))
+        
+        return {"mensaje": "Contenido eliminado"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete multimedia error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/multimedia/public")
+async def get_public_multimedia(tipo: Optional[str] = None, categoria: Optional[str] = None, limit: int = 50):
+    """Obtener contenido multimedia visible (público)"""
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                query = "SELECT * FROM multimedia WHERE visible = TRUE"
+                params = []
+                
+                if tipo:
+                    query += " AND tipo = %s"
+                    params.append(tipo)
+                
+                if categoria:
+                    query += " AND categoria = %s"
+                    params.append(categoria)
+                
+                query += " ORDER BY created_at DESC LIMIT %s"
+                params.append(limit)
+                
+                await cursor.execute(query, params)
+                multimedia_list = await cursor.fetchall()
+                
+                result = []
+                for item in multimedia_list:
+                    item_dict = dict(item)
+                    item_dict['tags'] = json.loads(item_dict.get('tags', '[]')) if item_dict.get('tags') else []
+                    # No incluir uploaded_by para usuarios públicos
+                    result.append(item_dict)
+                
+                return result
+    
+    except Exception as e:
+        logger.error(f"Get public multimedia error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/multimedia/{multimedia_id}/view")
+async def register_view(multimedia_id: str):
+    """Registrar vista de contenido multimedia"""
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE multimedia SET vistas = vistas + 1 WHERE multimedia_id = %s",
+                    (multimedia_id,)
+                )
+        
+        return {"mensaje": "Vista registrada"}
+    
+    except Exception as e:
+        logger.error(f"Register view error: {e}")
+        # No fallar si hay error, solo registrar
 
 # Campus Info
 @api_router.get("/campus/info")
