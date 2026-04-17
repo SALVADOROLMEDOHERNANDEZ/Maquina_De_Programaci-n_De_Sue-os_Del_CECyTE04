@@ -174,10 +174,10 @@ DO
 -- Solo Programación y Mantenimiento Industrial
 -- ═══════════════════════════════════════════════════════════════
 INSERT INTO especialidades (especialidad_id, nombre, descripcion, habilidades, campo_laboral, posicion_3d, color, icono) VALUES
-('prog', 'Programacion', 'Objetivo
+('prog', 'Programacion', 'Objetivo:
 En el contexto nacional la formación de Técnicos en: Programación es relevante porque: contribuye a la formación de personas capaces de integrarse a un mercado laboral dinámico y de alta demanda, que esta a la vanguardia en el uso de la tecnología y que contribuye a la transformación digital de los sectores productivos en el país.
 
-Perfil de Egreso
+Perfil de Egreso:
 Durante el proceso de formación de los cinco módulos, el estudiante desarrollará o reforzará las siguientes competencias profesionales:
 • Desarrolla software de aplicación con programación estructurada
 • Aplica metodologías de desarrollo de software utilizando herramientas de programación visual
@@ -188,7 +188,7 @@ Durante el proceso de formación de los cinco módulos, el estudiante desarrolla
  '["Desarrollador de Software", "Ingeniero de Datos", "Arquitecto de Sistemas", "DevOps Engineer"]',
  '{"x": -15, "y": 0, "z": 0}', '#00f0ff', 'Code'),
 
-('mantenimiento', 'Mantenimiento Industrial', 'Objetivo
+('mantenimiento', 'Mantenimiento Industrial', 'Objetivo:
 La carrera de Técnico en mantenimiento industrial ofrece las competencias profesionales que permiten al estudiante realizar actividades dirigidas
 a realizar mantenimiento a instalaciones eléctricas, fabricar pequeñas estructuras metálicas, realiza actividades de ajuste de banco utilizando
 herramientas básicas, interpretar planos de piezas mecánicas, utilizar máquinas herramientas convencionales y de control numérico para
@@ -196,7 +196,7 @@ reparación y fabricación de piezas, manejar máquinas de soldar de arco eléct
 sistemas de neumática e hidráulica, mantiene equipos de refrigeración y aire acondicionado e implementara los programas de administración del
 mantenimiento en los sistemas.
 
-Perfil de Egreso
+Perfil de Egreso:
 Durante el proceso de formación de los cinco módulos, el estudiante desarrollará o reforzará:
 Las siguientes competencias profesionales:
 • Repara instalaciones eléctricas

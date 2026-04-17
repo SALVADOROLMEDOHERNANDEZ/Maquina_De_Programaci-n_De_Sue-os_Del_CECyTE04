@@ -16,6 +16,8 @@ import httpx
 import aiofiles
 import hashlib
 import json
+from migrations import DatabaseMigration, MigrationBuilder
+import mysql.connector
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -1548,6 +1550,369 @@ async def update_comment(request: Request, comment_id: str, comment_update: Comm
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.delete("/publications/comments/{comment_id}")
+async def delete_comment(request: Request, comment_id: str):
+    """Eliminar comentario propio"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "DELETE FROM publication_comments WHERE comment_id = %s AND user_id = %s",
+                    (comment_id, user['user_id'])
+                )
+                if cursor.rowcount == 0:
+                    raise HTTPException(status_code=404, detail="Comment not found or not owned by user")
+        
+        return {"message": "Comment deleted"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete comment error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SISTEMA DE MIGRACIONES DE BASE DE DATOS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MigrationRequest(BaseModel):
+    """Modelo para ejecutar una migración"""
+    version: str = Field(..., description="Versión de la migración (ej: 001, 002)")
+    description: str = Field(..., description="Descripción de los cambios")
+    sql_commands: str = Field(..., description="Comandos SQL a ejecutar")
+    migration_type: str = Field("custom", description="Tipo: custom, add_column, modify_column, drop_column")
+
+class MigrationTypeRequest(BaseModel):
+    """Modelo para crear migración por tipo"""
+    version: str
+    description: str
+    migration_type: str  # add_column, modify_column, drop_column, add_table, add_index
+    table: Optional[str] = None
+    column: Optional[str] = None
+    data_type: Optional[str] = None
+    nullable: Optional[bool] = True
+    default: Optional[str] = None
+    columns: Optional[List[str]] = None  # Para add_table
+    index_name: Optional[str] = None  # Para add_index
+
+@api_router.post("/admin/migrations/execute")
+async def execute_migration_endpoint(request: Request, migration_data: MigrationRequest):
+    """
+    Ejecuta una migración de base de datos de forma segura.
+    Las migraciones se registran y pueden ser revertidas si es necesario.
+    
+    IMPORTANTE: Haz backup de tu BD antes de ejecutar migraciones críticas
+    """
+    admin = await require_admin(request)
+    
+    try:
+        db_config = {
+            'host': os.environ.get('MYSQL_HOST', 'localhost'),
+            'user': os.environ.get('MYSQL_USER', 'root'),
+            'password': os.environ.get('MYSQL_PASSWORD', ''),
+            'database': os.environ.get('MYSQL_DATABASE', 'cecyte04_dreams')
+        }
+        
+        migration_manager = DatabaseMigration(db_config)
+        
+        if not migration_manager.connect():
+            raise HTTPException(status_code=500, detail="No se pudo conectar a la base de datos")
+        
+        try:
+            # Crear tabla de control si no existe
+            migration_manager.create_migrations_table()
+            
+            # Ejecutar migración
+            success, message = migration_manager.execute_migration(
+                migration_data.version,
+                migration_data.sql_commands,
+                migration_data.description
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "version": migration_data.version,
+                    "message": message,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+            else:
+                return {
+                    "success": False,
+                    "version": migration_data.version,
+                    "error": message,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+        
+        finally:
+            migration_manager.disconnect()
+    
+    except Exception as e:
+        logger.error(f"Migration execution error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/admin/migrations/create-by-type")
+async def create_migration_by_type(request: Request, migration_data: MigrationTypeRequest):
+    """
+    Crea una migración usando tipos predefinidos:
+    - add_column: Agregar nueva columna
+    - modify_column: Modificar columna existente
+    - drop_column: Eliminar columna
+    - add_table: Crear nueva tabla
+    - add_index: Crear índice
+    """
+    admin = await require_admin(request)
+    
+    try:
+        # Generar SQL basado en tipo
+        sql_commands = MigrationBuilder.create_migration(
+            migration_data.version,
+            migration_data.description,
+            migration_data.migration_type,
+            {
+                'table': migration_data.table,
+                'column': migration_data.column,
+                'data_type': migration_data.data_type,
+                'nullable': migration_data.nullable,
+                'default': migration_data.default,
+                'columns': migration_data.columns,
+                'index_name': migration_data.index_name
+            }
+        )
+        
+        if not sql_commands:
+            raise HTTPException(status_code=400, detail="No se pudo generar SQL para el tipo especificado")
+        
+        # Ejecutar migración
+        db_config = {
+            'host': os.environ.get('MYSQL_HOST', 'localhost'),
+            'user': os.environ.get('MYSQL_USER', 'root'),
+            'password': os.environ.get('MYSQL_PASSWORD', ''),
+            'database': os.environ.get('MYSQL_DATABASE', 'cecyte04_dreams')
+        }
+        
+        migration_manager = DatabaseMigration(db_config)
+        
+        if not migration_manager.connect():
+            raise HTTPException(status_code=500, detail="No se pudo conectar a la BD")
+        
+        try:
+            migration_manager.create_migrations_table()
+            success, message = migration_manager.execute_migration(
+                migration_data.version,
+                sql_commands,
+                migration_data.description
+            )
+            
+            return {
+                "success": success,
+                "version": migration_data.version,
+                "migration_type": migration_data.migration_type,
+                "sql_generated": sql_commands,
+                "message": message,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+        
+        finally:
+            migration_manager.disconnect()
+    
+    except Exception as e:
+        logger.error(f"Migration creation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/admin/migrations/history")
+async def get_migration_history(request: Request, limit: int = 50):
+    """
+    Obtiene el historial completo de migraciones ejecutadas.
+    Muestra qué cambios se han aplicado, cuándo y si fueron exitosos.
+    """
+    admin = await require_admin(request)
+    
+    try:
+        db_config = {
+            'host': os.environ.get('MYSQL_HOST', 'localhost'),
+            'user': os.environ.get('MYSQL_USER', 'root'),
+            'password': os.environ.get('MYSQL_PASSWORD', ''),
+            'database': os.environ.get('MYSQL_DATABASE', 'cecyte04_dreams')
+        }
+        
+        migration_manager = DatabaseMigration(db_config)
+        
+        if not migration_manager.connect():
+            raise HTTPException(status_code=500, detail="No se pudo conectar a la BD")
+        
+        try:
+            history = migration_manager.get_migration_history()
+            
+            return {
+                "total": len(history),
+                "limit": limit,
+                "migrations": [
+                    {
+                        "id": h.get('id'),
+                        "version": h.get('version'),
+                        "description": h.get('description'),
+                        "status": h.get('status'),
+                        "executed_at": h.get('executed_at').isoformat() if h.get('executed_at') else None,
+                        "error_message": h.get('error_message'),
+                        "rollback_available": h.get('rollback_available')
+                    }
+                    for h in history[:limit]
+                ]
+            }
+        
+        finally:
+            migration_manager.disconnect()
+    
+    except Exception as e:
+        logger.error(f"Migration history error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/admin/migrations/pending")
+async def get_pending_migrations(request: Request):
+    """
+    Obtiene un resumen de migraciones ejecutadas.
+    Útil para tracking de cambios en el schema.
+    """
+    admin = await require_admin(request)
+    
+    try:
+        db_config = {
+            'host': os.environ.get('MYSQL_HOST', 'localhost'),
+            'user': os.environ.get('MYSQL_USER', 'root'),
+            'password': os.environ.get('MYSQL_PASSWORD', ''),
+            'database': os.environ.get('MYSQL_DATABASE', 'cecyte04_dreams')
+        }
+        
+        migration_manager = DatabaseMigration(db_config)
+        
+        if not migration_manager.connect():
+            raise HTTPException(status_code=500, detail="No se pudo conectar a la BD")
+        
+        try:
+            executed = migration_manager.get_executed_migrations()
+            
+            return {
+                "executed_migrations": executed,
+                "total_executed": len(executed),
+                "last_sync": datetime.now(timezone.utc).isoformat()
+            }
+        
+        finally:
+            migration_manager.disconnect()
+    
+    except Exception as e:
+        logger.error(f"Pending migrations error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/admin/migrations/validate")
+async def validate_schema(request: Request):
+    """
+    Valida la integridad del schema actual de la base de datos.
+    Genera un reporte completo de todas las tablas y columnas.
+    """
+    admin = await require_admin(request)
+    
+    try:
+        db_config = {
+            'host': os.environ.get('MYSQL_HOST', 'localhost'),
+            'user': os.environ.get('MYSQL_USER', 'root'),
+            'password': os.environ.get('MYSQL_PASSWORD', ''),
+            'database': os.environ.get('MYSQL_DATABASE', 'cecyte04_dreams')
+        }
+        
+        migration_manager = DatabaseMigration(db_config)
+        
+        if not migration_manager.connect():
+            raise HTTPException(status_code=500, detail="No se pudo conectar a la BD")
+        
+        try:
+            validation_report = migration_manager.validate_schema()
+            
+            return {
+                "validation": validation_report,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "status": "valid" if not validation_report.get('errors') else "invalid"
+            }
+        
+        finally:
+            migration_manager.disconnect()
+    
+    except Exception as e:
+        logger.error(f"Schema validation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/admin/migrations/templates")
+async def get_migration_templates(request: Request):
+    """
+    Devuelve ejemplos de SQL comunes para migraciones típicas
+    """
+    admin = await require_admin(request)
+    
+    return {
+        "templates": {
+            "add_user_field": {
+                "description": "Agregar campo de teléfono a usuarios",
+                "sql": "ALTER TABLE users ADD COLUMN phone_number VARCHAR(20);",
+                "version": "001"
+            },
+            "add_admin_field": {
+                "description": "Agregar campo de despacho a admin",
+                "sql": "ALTER TABLE admin_sessions ADD COLUMN despacho VARCHAR(100);",
+                "version": "002"
+            },
+            "create_backup_table": {
+                "description": "Crear tabla de backup de datos",
+                "sql": """CREATE TABLE IF NOT EXISTS data_backups (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    table_name VARCHAR(100) NOT NULL,
+                    backup_data JSON NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_created_at (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""",
+                "version": "003"
+            },
+            "add_audit_log": {
+                "description": "Crear tabla de auditoría",
+                "sql": """CREATE TABLE IF NOT EXISTS audit_log (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id VARCHAR(100),
+                    action VARCHAR(100) NOT NULL,
+                    table_name VARCHAR(100) NOT NULL,
+                    record_id VARCHAR(100),
+                    old_values JSON,
+                    new_values JSON,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_admin_id (admin_id),
+                    INDEX idx_created_at (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""",
+                "version": "004"
+            },
+            "add_index_performance": {
+                "description": "Agregar índice para mejorar performance",
+                "sql": "CREATE INDEX idx_user_created_at ON users (created_at);",
+                "version": "005"
+            }
+        },
+        "docs": {
+            "add_column": "ALTER TABLE table_name ADD COLUMN column_name DATA_TYPE [DEFAULT value];",
+            "modify_column": "ALTER TABLE table_name MODIFY COLUMN column_name DATA_TYPE;",
+            "drop_column": "ALTER TABLE table_name DROP COLUMN column_name;",
+            "add_index": "CREATE INDEX index_name ON table_name (column_name);",
+            "rename_table": "RENAME TABLE old_name TO new_name;",
+            "notes": "Siempre hacer backup antes de ejecutar migraciones. Los cambios se registran automáticamente."
+        }
+    }
 async def delete_comment(request: Request, comment_id: str):
     """Eliminar comentario propio o como admin"""
     user = await get_current_user(request)

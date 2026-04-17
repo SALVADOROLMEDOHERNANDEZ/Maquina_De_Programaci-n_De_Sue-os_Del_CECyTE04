@@ -6,6 +6,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import MediaManager from '../components/admin/MediaManager';
 import StatsDashboard from '../components/admin/StatsDashboard';
+import MigrationManager from '../components/admin/MigrationManager';
 import { 
   Shield, 
   Upload, 
@@ -21,7 +22,8 @@ import {
   Loader2,
   AlertCircle,
   BarChart3,
-  Film
+  Film,
+  Database
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -392,6 +394,12 @@ export default function AdminPanel() {
             <Film className="w-4 h-4 mr-2" /> Multimedia
           </Button>
           <Button
+            onClick={() => setActiveTab('migrations')}
+            className={`rounded-xl ${activeTab === 'migrations' ? 'btn-primary' : 'btn-secondary'}`}
+          >
+            <Database className="w-4 h-4 mr-2" /> Migraciones BD
+          </Button>
+          <Button
             onClick={() => setActiveTab('tarjetas')}
             className={`rounded-xl ${activeTab === 'tarjetas' ? 'btn-primary' : 'btn-secondary'}`}
           >
@@ -551,6 +559,13 @@ export default function AdminPanel() {
         {activeTab === 'multimedia' && (
           <div>
             <MediaManager onDataChange={loadData} />
+          </div>
+        )}
+
+        {/* Migrations Tab */}
+        {activeTab === 'migrations' && (
+          <div>
+            <MigrationManager />
           </div>
         )}
 
