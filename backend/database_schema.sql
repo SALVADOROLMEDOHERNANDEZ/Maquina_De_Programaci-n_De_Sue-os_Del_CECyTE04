@@ -290,6 +290,10 @@ CREATE TABLE IF NOT EXISTS multimedia (
     thumbnail_url VARCHAR(500),
     tags JSON DEFAULT NULL,
     categoria VARCHAR(100) DEFAULT 'general',
+    platform ENUM('instagram', 'facebook', 'youtube') DEFAULT NULL,
+    url VARCHAR(500) DEFAULT NULL,
+    likes_count INT DEFAULT 0,
+    comments_count INT DEFAULT 0,
     uploaded_by VARCHAR(50) NOT NULL,
     visible BOOLEAN DEFAULT TRUE,
     vistas INT DEFAULT 0,
@@ -300,11 +304,41 @@ CREATE TABLE IF NOT EXISTS multimedia (
     INDEX idx_categoria (categoria),
     INDEX idx_visible (visible),
     INDEX idx_created_at (created_at),
-    INDEX idx_uploaded_by (uploaded_by)
+    INDEX idx_uploaded_by (uploaded_by),
+    INDEX idx_platform (platform)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ═══════════════════════════════════════════════════════════════
--- INSERTAR INSIGNIAS INICIALES
+-- TABLA: publication_likes (Likes en publicaciones)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS publication_likes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    multimedia_id VARCHAR(50) NOT NULL,
+    user_id VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (multimedia_id) REFERENCES multimedia(multimedia_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    UNIQUE KEY unique_like (multimedia_id, user_id),
+    INDEX idx_multimedia_id (multimedia_id),
+    INDEX idx_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ═══════════════════════════════════════════════════════════════
+-- TABLA: publication_comments (Comentarios en publicaciones)
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS publication_comments (
+    comment_id VARCHAR(50) PRIMARY KEY,
+    multimedia_id VARCHAR(50) NOT NULL,
+    user_id VARCHAR(50) NOT NULL,
+    comment_text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (multimedia_id) REFERENCES multimedia(multimedia_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    INDEX idx_multimedia_id (multimedia_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 -- ═══════════════════════════════════════════════════════════════
 INSERT INTO badges (badge_id, nombre, descripcion, icono, color, puntos, categoria, requisito) VALUES
 ('primer_quiz', 'Explorador Vocacional', 'Completaste tu primer cuestionario vocacional', 'Compass', '#00f0ff', 10, 'quiz', 'Completar 1 cuestionario'),
@@ -328,30 +362,30 @@ ON DUPLICATE KEY UPDATE nombre=VALUES(nombre), descripcion=VALUES(descripcion);
 -- Collation: utf8mb4_unicode_ci
 -- Engine: InnoDB (para integridad referencial)
 -- 
--- STATUS: VERSIÓN 2.0 (Optimización de sesiones)
+-- STATUS: VERSIÓN 3.0 (Módulo de Publicaciones + Tour Virtual Múltiple)
 -- CAMBIOS: 
---   - UNIQUE constraint en user_id (user_sessions) - UNA sesión por usuario
---   - UNIQUE constraint en username (admin_sessions) - UNA sesión por admin
---   - Agregada tabla session_cleanup_log para auditoría
---   - Procedimiento almacenado cleanup_expired_sessions()
---   - Evento automático cleanup_sessions_event (cada 6 horas)
---   - Agregado índice idx_updated_at para tracking de sesiones activas
+--   - Agregados campos platform, url, likes_count, comments_count a multimedia
+--   - Nueva tabla publication_likes para likes en publicaciones
+--   - Nueva tabla publication_comments para comentarios en publicaciones
+--   - Modificada lógica de models_3d para permitir múltiples modelos activos
 --
--- Tablas creadas: 14
+-- Tablas creadas: 16
 -- - users: Usuarios del sistema
 -- - user_sessions: Sesiones activas (1 por usuario)
 -- - admin_sessions: Sesiones de admin (1 por admin)
--- - session_cleanup_log: Log de limpiezas automáticas ✨ NUEVO
+-- - session_cleanup_log: Log de limpiezas automáticas
 -- - especialidades: Carreras disponibles
 -- - simulations: Simulaciones generadas
--- - models_3d: Modelos 3D del plantel
+-- - models_3d: Modelos 3D del plantel (múltiples activos)
 -- - tarjeta_positions: Posiciones en tour 3D
 -- - badges: Insignias del sistema
 -- - user_badges: Insignias obtenidas por usuarios
 -- - quiz_completions: Cuestionarios completados
 -- - contributions: Contribuciones al proyecto IA CECYTE
 -- - user_points: Puntos totales de usuarios
--- - multimedia: Contenido multimedia del plantel
+-- - multimedia: Contenido multimedia del plantel (con publicaciones)
+-- - publication_likes: Likes en publicaciones ✨ NUEVO
+-- - publication_comments: Comentarios en publicaciones ✨ NUEVO
 --
 -- PROCEDIMIENTOS ALMACENADOS:
 -- - cleanup_expired_sessions(): Elimina sesiones expiradas

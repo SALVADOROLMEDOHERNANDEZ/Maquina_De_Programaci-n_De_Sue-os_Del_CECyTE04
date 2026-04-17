@@ -143,7 +143,7 @@ export default function Dashboard() {
       )}
       <Button
         variant="ghost"
-        onClick={() => navigate('/galeria-multimedia')}
+        onClick={() => navigate('/publicaciones')}
         className="menu-pill hidden md:inline-flex"
       >
         <Film className="w-4 h-4 text-[#ff7c9c]" />
@@ -256,7 +256,7 @@ export default function Dashboard() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4 }}
             className="glass-card rounded-2xl p-6 cursor-pointer group"
-            onClick={() => navigate('/galeria-multimedia')}
+            onClick={() => navigate('/publicaciones')}
             data-testid="dashboard-gallery-card"
           >
             <div className="w-14 h-14 rounded-xl bg-[#ff7c9c]/10 border border-[#ff7c9c]/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">

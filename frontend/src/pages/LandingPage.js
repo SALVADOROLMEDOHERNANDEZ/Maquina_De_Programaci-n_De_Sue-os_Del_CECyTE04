@@ -137,9 +137,9 @@ export default function LandingPage() {
           </Button>
           <Button
             variant="ghost"
-            onClick={() => navigate('/galeria-multimedia')}
+            onClick={() => navigate('/publicaciones')}
             className="menu-pill rounded-full px-5 py-3 text-sm hidden lg:inline-flex"
-            data-testid="nav-gallery-btn"
+            data-testid="nav-publicaciones-btn"
           >
             <Film className="w-4 h-4 text-[#ff7c9c]" />
             Publicaciones

@@ -643,7 +643,7 @@ export default function VirtualTour() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [espRes, posRes, modelRes] = await Promise.all([
+        const [espRes, posRes, modelsRes] = await Promise.all([
           fetch(`${API_URL}/api/especialidades`),
           fetch(`${API_URL}/api/tarjetas/positions`),
           fetch(`${API_URL}/api/models/active`)
@@ -652,10 +652,12 @@ export default function VirtualTour() {
         if (espRes.ok) setEspecialidades(await espRes.json());
         if (posRes.ok) setTarjetaPositions(await posRes.json());
 
-        if (modelRes.ok) {
-          const modelData = await modelRes.json();
-          if (modelData && modelData.filename) {
-            setActiveModelUrl(`${API_URL}/api/models/file/${modelData.filename}`);
+        if (modelsRes.ok) {
+          const modelsList = await modelsRes.json();
+          // Get first active model or display them as carousel
+          if (modelsList && Array.isArray(modelsList) && modelsList.length > 0) {
+            const activeModel = modelsList[0];
+            setActiveModelUrl(`${API_URL}/api/models/file/${activeModel.filename}`);
             setModelLoading(true);
             setModelError(null);
           }

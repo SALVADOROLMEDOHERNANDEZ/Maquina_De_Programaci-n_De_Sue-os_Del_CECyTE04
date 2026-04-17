@@ -13,7 +13,7 @@ import Especialidades from './pages/Especialidades';
 import AdminPanel from './pages/AdminPanel';
 import CareerQuiz from './pages/CareerQuiz';
 import CecyteAI from './pages/CecyteAI';
-import MediaGallery from './pages/MediaGallery';
+import Publicaciones from './pages/Publicaciones';
 
 import './App.css';
 
@@ -38,7 +38,7 @@ function AppRouter() {
       <Route path="/admin" element={<AdminPanel />} />
       <Route path="/cuestionario-vocacional" element={<CareerQuiz />} />
       <Route path="/ia-cecyte" element={<CecyteAI />} />
-      <Route path="/galeria-multimedia" element={<MediaGallery />} />
+      <Route path="/publicaciones" element={<Publicaciones />} />
     </Routes>
   );
 }

@@ -90,6 +90,8 @@ class MultimediaRequest(BaseModel):
     descripcion: Optional[str] = None
     categoria: Optional[str] = "general"
     tags: Optional[List[str]] = None
+    platform: Optional[str] = None  # 'instagram', 'facebook', 'youtube'
+    url: Optional[str] = None
 
 class MultimediaUpdate(BaseModel):
     titulo: Optional[str] = None
@@ -97,6 +99,14 @@ class MultimediaUpdate(BaseModel):
     categoria: Optional[str] = None
     tags: Optional[List[str]] = None
     visible: Optional[bool] = None
+    platform: Optional[str] = None
+    url: Optional[str] = None
+
+class CommentRequest(BaseModel):
+    comment_text: str
+
+class CommentUpdate(BaseModel):
+    comment_text: str
 
 # Helper Functions
 async def get_current_user(request: Request) -> Optional[dict]:
@@ -961,25 +971,34 @@ async def get_all_models(request: Request):
             return [dict(m) for m in models]
 
 @api_router.get("/models/active")
-async def get_active_model():
+async def get_active_models():
     pool = await get_db()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute("SELECT * FROM models_3d WHERE is_active = 1 LIMIT 1")
-            model = await cursor.fetchone()
-            return dict(model) if model else None
+            await cursor.execute("SELECT * FROM models_3d WHERE is_active = 1 ORDER BY uploaded_at DESC")
+            models = await cursor.fetchall()
+            return [dict(model) for model in models]
 
-@api_router.put("/admin/models/{model_id}/activate")
-async def activate_model(request: Request, model_id: str):
+@api_router.put("/admin/models/{model_id}/toggle")
+async def toggle_model_active(request: Request, model_id: str):
     await require_admin(request)
     pool = await get_db()
     async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            await cursor.execute("UPDATE models_3d SET is_active = 0")
-            await cursor.execute("UPDATE models_3d SET is_active = 1 WHERE model_id = %s", (model_id,))
-            if cursor.rowcount == 0:
+        async with pool.cursor() as cursor:
+            # Verificar estado actual
+            await cursor.execute("SELECT is_active FROM models_3d WHERE model_id = %s", (model_id,))
+            result = await cursor.fetchone()
+            if not result:
                 raise HTTPException(status_code=404, detail="Model not found")
-    return {"message": "Model activated"}
+            
+            new_status = 0 if result['is_active'] else 1
+            await cursor.execute("UPDATE models_3d SET is_active = %s WHERE model_id = %s", (new_status, model_id))
+    
+    return {"message": f"Model {'activated' if new_status else 'deactivated'}", "is_active": bool(new_status)}
+
+@api_router.put("/admin/models/{model_id}/activate")
+async def activate_model(request: Request, model_id: str):
+    return await toggle_model_active(request, model_id)
 
 @api_router.delete("/admin/models/{model_id}")
 async def delete_model(request: Request, model_id: str):
@@ -1090,7 +1109,9 @@ async def upload_multimedia(
     titulo: str = Form(...),
     descripcion: Optional[str] = Form(None),
     categoria: Optional[str] = Form("general"),
-    tags: Optional[str] = Form(None)
+    tags: Optional[str] = Form(None),
+    platform: Optional[str] = Form(None),
+    url: Optional[str] = Form(None)
 ):
     """Subir contenido multimedia (solo admin)"""
     admin = await require_admin(request)
@@ -1099,6 +1120,10 @@ async def upload_multimedia(
         # Validar tipo
         if tipo not in ['video', 'foto', 'publicacion']:
             raise HTTPException(status_code=400, detail="Tipo de contenido no válido")
+        
+        # Validar platform si es publicación
+        if tipo == 'publicacion' and platform and platform not in ['instagram', 'facebook', 'youtube']:
+            raise HTTPException(status_code=400, detail="Plataforma no válida")
         
         # Validar archivo
         if not file.filename:
@@ -1141,10 +1166,10 @@ async def upload_multimedia(
             async with conn.cursor() as cursor:
                 await cursor.execute(
                     """INSERT INTO multimedia 
-                       (multimedia_id, tipo, titulo, descripcion, archivo_url, tags, categoria, uploaded_by, visible, created_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s)""",
+                       (multimedia_id, tipo, titulo, descripcion, archivo_url, tags, categoria, platform, url, uploaded_by, visible, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s)""",
                     (multimedia_id, tipo, titulo, descripcion, f"/multimedia/{safe_filename}", 
-                     tags_json, categoria, user_id, datetime.now(timezone.utc))
+                     tags_json, categoria, platform, url, user_id, datetime.now(timezone.utc))
                 )
         
         return {
@@ -1234,6 +1259,14 @@ async def update_multimedia(request: Request, multimedia_id: str, data: Multimed
                 if data.visible is not None:
                     updates.append("visible = %s")
                     params.append(data.visible)
+                
+                if data.platform is not None:
+                    updates.append("platform = %s")
+                    params.append(data.platform)
+                
+                if data.url is not None:
+                    updates.append("url = %s")
+                    params.append(data.url)
                 
                 if updates:
                     updates.append("updated_at = %s")
@@ -1342,7 +1375,187 @@ async def register_view(multimedia_id: str):
         logger.error(f"Register view error: {e}")
         # No fallar si hay error, solo registrar
 
-# Campus Info
+# Publication Likes and Comments
+@api_router.post("/publications/{multimedia_id}/like")
+async def toggle_like(request: Request, multimedia_id: str):
+    """Dar o quitar like a una publicación"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Verificar si ya existe el like
+                await cursor.execute(
+                    "SELECT id FROM publication_likes WHERE multimedia_id = %s AND user_id = %s",
+                    (multimedia_id, user['user_id'])
+                )
+                existing_like = await cursor.fetchone()
+                
+                if existing_like:
+                    # Quitar like
+                    await cursor.execute(
+                        "DELETE FROM publication_likes WHERE multimedia_id = %s AND user_id = %s",
+                        (multimedia_id, user['user_id'])
+                    )
+                    await cursor.execute(
+                        "UPDATE multimedia SET likes_count = likes_count - 1 WHERE multimedia_id = %s",
+                        (multimedia_id,)
+                    )
+                    return {"action": "unliked", "likes_count": await get_likes_count(cursor, multimedia_id)}
+                else:
+                    # Dar like
+                    await cursor.execute(
+                        "INSERT INTO publication_likes (multimedia_id, user_id) VALUES (%s, %s)",
+                        (multimedia_id, user['user_id'])
+                    )
+                    await cursor.execute(
+                        "UPDATE multimedia SET likes_count = likes_count + 1 WHERE multimedia_id = %s",
+                        (multimedia_id,)
+                    )
+                    return {"action": "liked", "likes_count": await get_likes_count(cursor, multimedia_id)}
+    
+    except Exception as e:
+        logger.error(f"Toggle like error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/publications/{multimedia_id}/likes")
+async def get_likes(multimedia_id: str):
+    """Obtener likes de una publicación"""
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute("""
+                    SELECT pl.*, u.name, u.picture 
+                    FROM publication_likes pl 
+                    JOIN users u ON pl.user_id = u.user_id 
+                    WHERE pl.multimedia_id = %s 
+                    ORDER BY pl.created_at DESC
+                """, (multimedia_id,))
+                likes = await cursor.fetchall()
+                return [dict(like) for like in likes]
+    
+    except Exception as e:
+        logger.error(f"Get likes error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/publications/{multimedia_id}/comments")
+async def add_comment(request: Request, multimedia_id: str, comment: CommentRequest):
+    """Agregar comentario a una publicación"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        comment_id = f"comment_{uuid.uuid4().hex[:12]}"
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "INSERT INTO publication_comments (comment_id, multimedia_id, user_id, comment_text) VALUES (%s, %s, %s, %s)",
+                    (comment_id, multimedia_id, user['user_id'], comment.comment_text)
+                )
+                await cursor.execute(
+                    "UPDATE multimedia SET comments_count = comments_count + 1 WHERE multimedia_id = %s",
+                    (multimedia_id,)
+                )
+        
+        return {"comment_id": comment_id, "message": "Comment added"}
+    
+    except Exception as e:
+        logger.error(f"Add comment error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/publications/{multimedia_id}/comments")
+async def get_comments(multimedia_id: str):
+    """Obtener comentarios de una publicación"""
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute("""
+                    SELECT pc.*, u.name, u.picture 
+                    FROM publication_comments pc 
+                    JOIN users u ON pc.user_id = u.user_id 
+                    WHERE pc.multimedia_id = %s 
+                    ORDER BY pc.created_at DESC
+                """, (multimedia_id,))
+                comments = await cursor.fetchall()
+                return [dict(comment) for comment in comments]
+    
+    except Exception as e:
+        logger.error(f"Get comments error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/publications/comments/{comment_id}")
+async def update_comment(request: Request, comment_id: str, comment_update: CommentUpdate):
+    """Actualizar comentario propio"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE publication_comments SET comment_text = %s, updated_at = NOW() WHERE comment_id = %s AND user_id = %s",
+                    (comment_update.comment_text, comment_id, user['user_id'])
+                )
+                if cursor.rowcount == 0:
+                    raise HTTPException(status_code=404, detail="Comment not found or not owned by user")
+        
+        return {"message": "Comment updated"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update comment error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.delete("/publications/comments/{comment_id}")
+async def delete_comment(request: Request, comment_id: str):
+    """Eliminar comentario propio o como admin"""
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        pool = await get_db()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                # Verificar si es admin o propietario del comentario
+                if user.get('is_admin'):
+                    await cursor.execute("SELECT multimedia_id FROM publication_comments WHERE comment_id = %s", (comment_id,))
+                else:
+                    await cursor.execute("SELECT multimedia_id FROM publication_comments WHERE comment_id = %s AND user_id = %s", (comment_id, user['user_id']))
+                
+                comment = await cursor.fetchone()
+                if not comment:
+                    raise HTTPException(status_code=404, detail="Comment not found")
+                
+                await cursor.execute("DELETE FROM publication_comments WHERE comment_id = %s", (comment_id,))
+                await cursor.execute(
+                    "UPDATE multimedia SET comments_count = comments_count - 1 WHERE multimedia_id = %s",
+                    (comment['multimedia_id'],)
+                )
+        
+        return {"message": "Comment deleted"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete comment error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def get_likes_count(cursor, multimedia_id: str) -> int:
+    """Helper function to get current likes count"""
+    await cursor.execute("SELECT likes_count FROM multimedia WHERE multimedia_id = %s", (multimedia_id,))
+    result = await cursor.fetchone()
+    return result['likes_count'] if result else 0
 @api_router.get("/campus/info")
 async def get_campus_info():
     return {
