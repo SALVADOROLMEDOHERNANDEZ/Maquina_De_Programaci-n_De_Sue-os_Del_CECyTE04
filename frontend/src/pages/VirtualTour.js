@@ -108,7 +108,7 @@ function SpecialtyCard3D({ especialidad, position, isSelected, onSelect }) {
   );
 }
 // Avatar simple
-const Avatar3D = React.forwardRef(({ url }, ref) => {
+const Avatar3D = React.forwardRef(({ url, startPosition = [-50, 0, -50] }, ref) => {
   const [model, setModel] = useState();
 
   useEffect(() => {
@@ -120,76 +120,81 @@ const Avatar3D = React.forwardRef(({ url }, ref) => {
       loader.setMeshoptDecoder(MeshoptDecoder);
 
       loader.load(url, (gltf) => {
-  const scene = gltf.scene;
+        const scene = gltf.scene;
 
-  // 🔥 escala
-  scene.scale.set(1.5, 1.5, 1.5);
+        // 🔥 escala
+        scene.scale.set(1.5, 1.5, 1.5);
 
-  // 🔥 crear contenedor (MUY IMPORTANTE)
-  const group = new THREE.Group();
-  group.add(scene);
+        // 🔥 crear contenedor para el avatar
+        const group = new THREE.Group();
+        group.add(scene);
 
-  // 🔥 calcular tamaño
-  const box = new THREE.Box3().setFromObject(scene);
+        // 🔥 mantener la posición original del GLB del avatar
+        group.position.set(startPosition[0], startPosition[1], startPosition[2]);
 
-  // 🔥 levantar modelo correctamente
-  scene.position.y = -box.min.y;
+        // 🔥 levanta el avatar para que no quede bajo el suelo
+        const box = new THREE.Box3().setFromObject(scene);
+        scene.position.y = -box.min.y;
 
-  // 🔥 guardas el GROUP (no el scene)
-  setModel(group);
-});
+        setModel(group);
+      });
     };
 
     load();
-  }, [url]);
+  }, [url, startPosition]);
 
   if (!model) return null;
 
   return <primitive ref={ref} object={model} />;
 });
 //Movimiento del Avatar
-function Player({ url, playerRef, mobileControls }) {
+function Player({ url, playerRef, startPosition = [-45, 0, -45], mobileControls }) {
   const keys = useKeyboard();
   const lightRef = useRef();
 
   const velocityY = useRef(0);
   const isJumping = useRef(false);
+  const initialized = useRef(false);
+
+  useEffect(() => {
+    const checkPosition = setInterval(() => {
+      if (playerRef.current && !initialized.current) {
+        playerRef.current.position.set(startPosition[0], startPosition[1], startPosition[2]);
+        initialized.current = true;
+      }
+    }, 50);
+
+    return () => clearInterval(checkPosition);
+  }, [playerRef, startPosition]);
 
   useFrame(() => {
     if (!playerRef.current) return;
 
     const speed = 0.3;
 
-    // 🎮 CONTROLES (PC + MÓVIL)
     const forward = keys.current['arrowup'] || mobileControls?.forward;
     const back = keys.current['arrowdown'] || mobileControls?.back;
     const left = keys.current['arrowleft'] || mobileControls?.left;
     const right = keys.current['arrowright'] || mobileControls?.right;
 
-    // 🎯 DIRECCIÓN
-    let dirX = 0;
-    let dirZ = 0;
-
-    if (forward) dirZ -= 1;
-    if (back) dirZ += 1;
-    if (left) dirX -= 1;
-    if (right) dirX += 1;
-
-    // 🎯 ROTACIÓN SUAVE
-    if (dirX !== 0 || dirZ !== 0) {
-      const angle = Math.atan2(dirX, dirZ);
-
-      playerRef.current.rotation.y = THREE.MathUtils.lerp(
-        playerRef.current.rotation.y,
-        angle,
-        0.2
-      );
+    // Rotación del avatar
+    if (left && !right) {
+      playerRef.current.rotation.y += 0.05;
+    } else if (right && !left) {
+      playerRef.current.rotation.y -= 0.05;
     }
 
-    if (forward) playerRef.current.position.z -= speed;
-    if (back) playerRef.current.position.z += speed;
-    if (left) playerRef.current.position.x -= speed;
-    if (right) playerRef.current.position.x += speed;
+    const direction = new THREE.Vector3(0, 0, -1).applyAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      playerRef.current.rotation.y
+    );
+
+    if (forward && !back) {
+      playerRef.current.position.addScaledVector(direction, speed);
+    }
+    if (back && !forward) {
+      playerRef.current.position.addScaledVector(direction, -speed);
+    }
 
     // 🟢 SALTO
     if ((keys.current[' '] || mobileControls?.jump) && !isJumping.current) {
@@ -225,45 +230,108 @@ function Player({ url, playerRef, mobileControls }) {
 
   return (
     <>
-      {/* 💡 LUZ DINÁMICA */}
       <pointLight ref={lightRef} intensity={2} />
-
-      {/* 👤 AVATAR */}
-      <Avatar3D ref={playerRef} url={url} />
+      <Avatar3D ref={playerRef} url={url} startPosition={startPosition} />
     </>
   );
 }
-//Vision
-function CameraFollow({ target }) {
+//Vision con soporte para múltiples modos
+function CameraFollow({ target, viewMode = 'third-person' }) {
   const { camera } = useThree();
-  const isMouseDown = useRef(false);
+  const orbitState = useRef({
+    theta: Math.PI / 4,
+    phi: Math.PI / 3,
+    distance: 15,
+    isDragging: false
+  });
 
   useEffect(() => {
-    const down = () => (isMouseDown.current = true);
-    const up = () => (isMouseDown.current = false);
+    const onMouseDown = () => {
+      orbitState.current.isDragging = true;
+    };
 
-    window.addEventListener("mousedown", down);
-    window.addEventListener("mouseup", up);
+    const onMouseUp = () => {
+      orbitState.current.isDragging = false;
+    };
+
+    const onMouseMove = (e) => {
+      if (!orbitState.current.isDragging || viewMode !== 'orbit') return;
+
+      // 🎮 ÓRBITA MANUAL: usuario controla con mouse
+      const deltaX = e.movementX * 0.005;
+      const deltaY = e.movementY * 0.005;
+
+      orbitState.current.theta -= deltaX;
+      orbitState.current.phi -= deltaY;
+
+      // Limitar phi entre 0.1 y Math.PI - 0.1
+      orbitState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1, orbitState.current.phi));
+    };
+
+    const onWheel = (e) => {
+      if (viewMode !== 'orbit') return;
+      e.preventDefault();
+      
+      // 🎮 ZOOM con rueda del mouse
+      orbitState.current.distance += e.deltaY * 0.01;
+      orbitState.current.distance = Math.max(5, Math.min(50, orbitState.current.distance));
+    };
+
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('wheel', onWheel, { passive: false });
 
     return () => {
-      window.removeEventListener("mousedown", down);
-      window.removeEventListener("mouseup", up);
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('wheel', onWheel);
     };
-  }, []);
+  }, [viewMode]);
 
   useFrame(() => {
     if (!target.current) return;
 
     const pos = target.current.position;
 
-    // 🎯 cámara sigue al jugador
-    camera.position.lerp(
-      new THREE.Vector3(pos.x + 10, pos.y + 8, pos.z + 10),
-      0.1
-    );
-
-    // 🔥 SOLO mira al jugador si NO estás moviendo el mouse
-    if (!isMouseDown.current) {
+    if (viewMode === 'first-person') {
+      // 🎮 VISTA 1ERA PERSONA: cámara real humana
+      const eyeHeight = 1.6;
+      
+      // Cámara en la cabeza del avatar
+      camera.position.copy(pos).add(new THREE.Vector3(0, eyeHeight, 0));
+      
+      // La cámara mira en la DIRECCIÓN del avatar
+      const forward = new THREE.Vector3(0, 0, -1);
+      forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), target.current.rotation.y);
+      const lookTarget = camera.position.clone().add(forward.multiplyScalar(10));
+      camera.lookAt(lookTarget);
+      
+    } else if (viewMode === 'orbit') {
+      // 🎮 VISTA ÓRBITA: controlada por el usuario
+      const state = orbitState.current;
+      const { theta, phi, distance } = state;
+      
+      // Convertir coordenadas esféricas a cartesianas
+      const x = Math.sin(phi) * Math.cos(theta);
+      const y = Math.cos(phi);
+      const z = Math.sin(phi) * Math.sin(theta);
+      
+      camera.position.set(
+        pos.x + x * distance,
+        pos.y + 3 + y * distance,
+        pos.z + z * distance
+      );
+      
+      camera.lookAt(pos.x, pos.y + 1.5, pos.z);
+      
+    } else {
+      // 🎮 VISTA 3ERA PERSONA (por defecto)
+      camera.position.lerp(
+        new THREE.Vector3(pos.x + 10, pos.y + 8, pos.z + 10),
+        0.1
+      );
       camera.lookAt(pos);
     }
   });
@@ -392,17 +460,12 @@ function LoadedModel({ url, onError }) {
         
         if (!mounted) return;
         
-        // Auto-calculate bounding box and center the model
+        // Auto-calculate bounding box to preserve scale, but keep the GLB origin intact
         const box = new THREE.Box3().setFromObject(scene);
-        const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
         
-        // Center the model on the ground
-        scene.position.x = -center.x;
-        scene.position.z = -center.z;
-        scene.position.y = -box.min.y; // Place on ground
-        
-        // Scale if too large or too small
+        // Mantener origen del archivo GLB: no centrar en X/Z ni en Y
+        // Solo ajustar la escala si es necesario
         const maxDim = Math.max(size.x, size.y, size.z);
         if (maxDim > 60) {
           const scaleFactor = 60 / maxDim;
@@ -458,8 +521,8 @@ function LoadedModel({ url, onError }) {
   return <primitive object={model} />;
 }
 
-// Escena principal
-function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrl, onModelError, avatarUrl,mobileControls}) {
+// Escena principal con soporte para múltiples modelos
+function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrls, onModelError, avatarUrl, mobileControls, viewMode, showCollisions }) {
   const defaultPositions = useMemo(() => [
     { x: -20, y: 2, z: 14 },
     { x: 20, y: 2, z: 14 },
@@ -469,33 +532,81 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
   ], []);
   const playerRef = useRef();
   const lastTriggeredRef = useRef(null);
+  const modelsRef = useRef([]); // 🔥 Guardar referencias a modelos
+  
+  // 🔥 Todos los modelos centrados en el mismo lugar
+  const modelPositions = useMemo(() => {
+    if (!activeModelUrls || activeModelUrls.length === 0) return [];
+    
+    // Todos los modelos en el CENTRO [0, 0, 0]
+    return activeModelUrls.map(() => ({
+      x: 0,
+      y: 0,
+      z: 0
+    }));
+  }, [activeModelUrls]);
   
   useFrame(() => {
-  if (!playerRef.current) return;
+    if (!playerRef.current) return;
 
-  especialidades.forEach((esp, index) => {
-    const savedPos = tarjetaPositions.find(p => p.especialidad_id === esp.especialidad_id);
-    const pos = savedPos?.position || defaultPositions[index];
+    especialidades.forEach((esp, index) => {
+      const savedPos = tarjetaPositions.find(p => p.especialidad_id === esp.especialidad_id);
+      const pos = savedPos?.position || defaultPositions[index];
 
-    const dx = playerRef.current.position.x - pos.x;
-    const dz = playerRef.current.position.z - pos.z;
+      const dx = playerRef.current.position.x - pos.x;
+      const dz = playerRef.current.position.z - pos.z;
 
-    const distance = Math.sqrt(dx * dx + dz * dz);
+      const distance = Math.sqrt(dx * dx + dz * dz);
 
-    if (distance < 3) {
-      // 🔒 evita repetir
-      if (lastTriggeredRef.current !== esp.especialidad_id) {
-        lastTriggeredRef.current = esp.especialidad_id;
-        onSelectEspecialidad(esp.especialidad_id);
+      if (distance < 3) {
+        if (lastTriggeredRef.current !== esp.especialidad_id) {
+          lastTriggeredRef.current = esp.especialidad_id;
+          onSelectEspecialidad(esp.especialidad_id);
+        }
+      } else {
+        if (lastTriggeredRef.current === esp.especialidad_id) {
+          lastTriggeredRef.current = null;
+        }
       }
-    } else {
-      // 🔓 reset cuando te alejas
-      if (lastTriggeredRef.current === esp.especialidad_id) {
-        lastTriggeredRef.current = null;
-      }
+    });
+    
+    // 🔥 DETECCIÓN DE COLISIONES MEJORADA: Avatar vs Modelos
+    if (modelsRef.current.length > 0 && playerRef.current) {
+      modelsRef.current.forEach((model) => {
+        if (!model) return;
+        
+        try {
+          // Calcular bounding box del modelo
+          const bbox = new THREE.Box3().setFromObject(model);
+          const modelSize = bbox.getSize(new THREE.Vector3());
+          const modelCenter = bbox.getCenter(new THREE.Vector3());
+          
+          const playerPos = playerRef.current.position;
+          const playerRadius = 0.8;
+          
+          // Distancia entre centros
+          const dx = playerPos.x - modelCenter.x;
+          const dz = playerPos.z - modelCenter.z;
+          const distance = Math.sqrt(dx * dx + dz * dz);
+          
+          // Distancia de colisión = mitad del tamaño del modelo + radio del avatar
+          const maxModelDim = Math.max(modelSize.x, modelSize.z) / 2;
+          const COLLISION_DISTANCE = maxModelDim + playerRadius;
+          
+          if (distance < COLLISION_DISTANCE && distance > 0.01) {
+            // Empujar avatar hacia atrás de forma más fuerte
+            const angle = Math.atan2(dz, dx);
+            const pushForce = 0.5;
+            playerRef.current.position.x += Math.cos(angle) * pushForce;
+            playerRef.current.position.z += Math.sin(angle) * pushForce;
+          }
+        } catch (e) {
+          // Si hay error calculando bbox, ignorar
+        }
+      });
     }
   });
-});
+  
   return (
     <>
       <color attach="background" args={['#020408']} />
@@ -511,10 +622,28 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
       
       <Ground />
       
-      {activeModelUrl ? (
-        <Suspense fallback={null}>
-          <LoadedModel url={activeModelUrl} onError={onModelError} />
-        </Suspense>
+      {/* 🔥 RENDERIZAR TODOS LOS MODELOS ACTIVOS */}
+      {activeModelUrls && activeModelUrls.length > 0 ? (
+        activeModelUrls.map((modelData, index) => (
+          <group key={modelData.id} position={[modelPositions[index]?.x || 0, modelPositions[index]?.y || 0, modelPositions[index]?.z || 0]}>
+            <Suspense fallback={null}>
+              <LoadedModel 
+                url={modelData.url} 
+                onError={onModelError}
+                ref={(ref) => {
+                  if (ref) modelsRef.current[index] = ref;
+                }}
+              />
+            </Suspense>
+            {/* 🔥 DEBUG: Mostrar colisión si está activado */}
+            {showCollisions && (
+              <mesh position={[0, 5, 0]}>
+                <sphereGeometry args={[8, 16, 16]} />
+                <meshBasicMaterial color="red" wireframe transparent opacity={0.3} />
+              </mesh>
+            )}
+          </group>
+        ))
       ) : (
         <CentralMonument />
       )}
@@ -537,10 +666,11 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
         <Player 
           playerRef={playerRef}
           url={avatarUrl}
+          startPosition={[-45, 0, -45]}
           mobileControls={mobileControls} 
         />
       )}
-      <CameraFollow target={playerRef} />
+      <CameraFollow target={playerRef} viewMode={viewMode} />
       <OrbitControls
         enableDamping
         dampingFactor={0.05}
@@ -628,10 +758,12 @@ export default function VirtualTour() {
   const [loading, setLoading] = useState(true);
   const [tarjetaPositions, setTarjetaPositions] = useState([]);
   const [userName, setUserName] = useState('Visitante');
-  const [activeModelUrl, setActiveModelUrl] = useState(null);
+  const [activeModelUrls, setActiveModelUrls] = useState([]); // 🔥 Múltiples modelos
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState(null);
-  const [avatarUrl, setAvatarUrl] = useState(null); // 🔥 NO OLVIDES ESTO
+  const [avatarUrl, setAvatarUrl] = useState(null);
+  const [viewMode, setViewMode] = useState('third-person'); // 🔥 SISTEMA DE VISTAS
+  const [showCollisions, setShowCollisions] = useState(false); // 🔥 Debug colisiones
   const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
   const [mobileControls, setMobileControls] = useState({
     forward: false,
@@ -654,10 +786,13 @@ export default function VirtualTour() {
 
         if (modelsRes.ok) {
           const modelsList = await modelsRes.json();
-          // Get first active model or display them as carousel
+          // Render ALL active models, distributed around the scene
           if (modelsList && Array.isArray(modelsList) && modelsList.length > 0) {
-            const activeModel = modelsList[0];
-            setActiveModelUrl(`${API_URL}/api/models/file/${activeModel.filename}`);
+            setActiveModelUrls(modelsList.map(model => ({
+              id: model.model_id,
+              url: `${API_URL}/api/models/file/${model.filename}`,
+              filename: model.filename
+            })));
             setModelLoading(true);
             setModelError(null);
           }
@@ -762,10 +897,12 @@ export default function VirtualTour() {
                 selectedEspecialidad={selectedEspecialidad}
                 onSelectEspecialidad={handleSelectEspecialidad}
                 tarjetaPositions={tarjetaPositions}
-                activeModelUrl={activeModelUrl}
+                activeModelUrls={activeModelUrls}
                 onModelError={handleModelError}
                 avatarUrl={avatarUrl}
                 mobileControls={mobileControls}
+                viewMode={viewMode}
+                showCollisions={showCollisions}
               />
             </Suspense>
           </Canvas>
@@ -795,7 +932,13 @@ export default function VirtualTour() {
 
       {/* Controls help */}
       <div className="absolute bottom-4 left-4 glass px-4 py-3 rounded-xl text-sm text-white/50" data-testid="tour-controls-help">
-        <p>Arrastra para rotar | Scroll para zoom | Click en tarjeta</p>
+        <p className="font-semibold text-white/70 mb-1">Controles:</p>
+        <p>↑↓←→ Movimiento | ESPACIO Saltar</p>
+        {viewMode === 'orbit' ? (
+          <p>🖱️ Arrastra: Rotar | Scroll: Zoom</p>
+        ) : (
+          <p>Orbita: Arrastra para rotar | Scroll zoom</p>
+        )}
       </div>
       {/* Legend */}
       <div className="absolute bottom-4 right-4 glass px-4 py-3 rounded-xl" data-testid="tour-legend">
@@ -816,12 +959,25 @@ export default function VirtualTour() {
       </div>
 
       {/* Active model indicator */}
-      {activeModelUrl && (
+      {activeModelUrls && activeModelUrls.length > 0 && (
         <div className="absolute top-20 left-4 glass px-4 py-2 rounded-xl flex items-center gap-2">
           <Box className="w-4 h-4 text-[#ccff00]" />
-          <span className="text-white/70 text-sm">Modelo del plantel cargado</span>
+          <span className="text-white/70 text-sm">{activeModelUrls.length} modelo(s) cargado(s)</span>
         </div>
       )}
+
+      {/* View Mode Selector */}
+      <div className="absolute top-20 left-1/2 -translate-x-1/2 glass px-4 py-2 rounded-xl flex items-center gap-2">
+        <select 
+          value={viewMode}
+          onChange={(e) => setViewMode(e.target.value)}
+          className="bg-transparent text-white text-sm focus:outline-none cursor-pointer"
+        >
+          <option value="third-person" className="bg-gray-900">📷 3ª Persona</option>
+          <option value="first-person" className="bg-gray-900">👁️ 1ª Persona</option>
+          <option value="orbit" className="bg-gray-900">🔄 Órbita</option>
+        </select>
+      </div>
 
       {/* User */}
       <div className="absolute top-20 right-4 glass px-4 py-2 rounded-xl flex items-center gap-2" data-testid="tour-user-info">

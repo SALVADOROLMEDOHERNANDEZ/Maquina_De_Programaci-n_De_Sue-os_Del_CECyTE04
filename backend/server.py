@@ -371,6 +371,34 @@ async def get_admin_statistics(request: Request):
                     LIMIT 5
                 """)
                 top_users = [{"name": row['name'], "puntos": row['puntos_totales']} for row in await cursor.fetchall()]
+                
+                # Usuarios registrados por mes (últimos 12 meses)
+                await cursor.execute("""
+                    SELECT DATE_FORMAT(created_at, '%Y-%m') as month, COUNT(*) as count
+                    FROM users
+                    WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+                    GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+                    ORDER BY month
+                """)
+                users_by_month = [{"month": row['month'], "count": row['count']} for row in await cursor.fetchall()]
+                
+                # Simulaciones por especialidad
+                await cursor.execute("""
+                    SELECT s.carrera, COUNT(*) as count
+                    FROM simulations s
+                    GROUP BY s.carrera
+                    ORDER BY count DESC
+                """)
+                simulations_by_career = [{"career": row['carrera'], "count": row['count']} for row in await cursor.fetchall()]
+                
+                # Actividad reciente (últimas 24 horas)
+                await cursor.execute("""
+                    SELECT 
+                        (SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) as new_users_24h,
+                        (SELECT COUNT(*) FROM simulations WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) as new_simulations_24h,
+                        (SELECT COUNT(*) FROM multimedia WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) as new_multimedia_24h
+                """)
+                activity_24h = await cursor.fetchone()
         
         return {
             "users_total": users_count,
@@ -381,7 +409,10 @@ async def get_admin_statistics(request: Request):
             "active_3d_models": active_models,
             "multimedia_by_type": multimedia_by_type,
             "pending_contributions": pending_contributions,
-            "top_users": top_users
+            "top_users": top_users,
+            "users_by_month": users_by_month,
+            "simulations_by_career": simulations_by_career,
+            "activity_24h": activity_24h
         }
     except Exception as e:
         logger.error(f"Error obtaining statistics: {e}")
@@ -984,7 +1015,7 @@ async def toggle_model_active(request: Request, model_id: str):
     await require_admin(request)
     pool = await get_db()
     async with pool.acquire() as conn:
-        async with pool.cursor() as cursor:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
             # Verificar estado actual
             await cursor.execute("SELECT is_active FROM models_3d WHERE model_id = %s", (model_id,))
             result = await cursor.fetchone()
