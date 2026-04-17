@@ -147,14 +147,23 @@ const Avatar3D = React.forwardRef(({ url, startPosition = [-50, 0, -50] }, ref) 
 
   return <primitive ref={ref} object={model} />;
 });
-//Movimiento del Avatar
-function Player({ url, playerRef, startPosition = [-45, 0, -45], mobileControls }) {
+//Movimiento del Avatar con detección de colisiones por raycasting
+function Player({ url, playerRef, startPosition = [-45, 0, -45], mobileControls, collidersRef, onNearModel }) {
   const keys = useKeyboard();
   const lightRef = useRef();
 
   const velocityY = useRef(0);
   const isJumping = useRef(false);
   const initialized = useRef(false);
+
+  // 🔥 Raycasters reutilizables para detectar colisiones (delante, detrás, lados)
+  const rayForward = useMemo(() => new THREE.Raycaster(), []);
+  const rayBack = useMemo(() => new THREE.Raycaster(), []);
+  const rayLeft = useMemo(() => new THREE.Raycaster(), []);
+  const rayRight = useMemo(() => new THREE.Raycaster(), []);
+
+  // Distancia mínima entre avatar y cualquier malla (en unidades del mundo)
+  const COLLISION_BUFFER = 1.2;
 
   useEffect(() => {
     const checkPosition = setInterval(() => {
@@ -167,15 +176,39 @@ function Player({ url, playerRef, startPosition = [-45, 0, -45], mobileControls 
     return () => clearInterval(checkPosition);
   }, [playerRef, startPosition]);
 
+  // 🔥 Helper: obtener todas las mallas colisionables de los modelos cargados
+  const getCollidableMeshes = () => {
+    const meshes = [];
+    if (!collidersRef?.current) return meshes;
+    collidersRef.current.forEach((obj) => {
+      if (!obj) return;
+      obj.traverse((child) => {
+        if (child.isMesh && child.visible) {
+          meshes.push(child);
+        }
+      });
+    });
+    return meshes;
+  };
+
+  // 🔥 Helper: verifica si hay una malla bloqueando en cierta dirección
+  const isBlocked = (origin, direction, raycaster, meshes) => {
+    if (meshes.length === 0) return false;
+    raycaster.set(origin, direction);
+    raycaster.far = COLLISION_BUFFER;
+    const hits = raycaster.intersectObjects(meshes, false);
+    return hits.length > 0 && hits[0].distance < COLLISION_BUFFER;
+  };
+
   useFrame(() => {
     if (!playerRef.current) return;
 
     const speed = 0.3;
 
-    const forward = keys.current['arrowup'] || mobileControls?.forward;
-    const back = keys.current['arrowdown'] || mobileControls?.back;
-    const left = keys.current['arrowleft'] || mobileControls?.left;
-    const right = keys.current['arrowright'] || mobileControls?.right;
+    const forward = keys.current['arrowup'] || keys.current['w'] || mobileControls?.forward;
+    const back = keys.current['arrowdown'] || keys.current['s'] || mobileControls?.back;
+    const left = keys.current['arrowleft'] || keys.current['a'] || mobileControls?.left;
+    const right = keys.current['arrowright'] || keys.current['d'] || mobileControls?.right;
 
     // Rotación del avatar
     if (left && !right) {
@@ -184,16 +217,44 @@ function Player({ url, playerRef, startPosition = [-45, 0, -45], mobileControls 
       playerRef.current.rotation.y -= 0.05;
     }
 
-    const direction = new THREE.Vector3(0, 0, -1).applyAxisAngle(
+    const forwardDir = new THREE.Vector3(0, 0, -1).applyAxisAngle(
       new THREE.Vector3(0, 1, 0),
       playerRef.current.rotation.y
     );
+    const backDir = forwardDir.clone().negate();
 
+    // Origen del rayo: a la altura del "pecho" del avatar
+    const rayOrigin = playerRef.current.position.clone();
+    rayOrigin.y += 1.0;
+
+    const collidableMeshes = getCollidableMeshes();
+
+    // 🔥 Detectar si está cerca de algún modelo (para feedback UI)
+    let nearModel = false;
+    if (collidableMeshes.length > 0) {
+      const checkRay = new THREE.Raycaster();
+      for (const dir of [forwardDir, backDir]) {
+        checkRay.set(rayOrigin, dir);
+        checkRay.far = 3.5;
+        const h = checkRay.intersectObjects(collidableMeshes, false);
+        if (h.length > 0 && h[0].distance < 3.5) {
+          nearModel = true;
+          break;
+        }
+      }
+    }
+    if (onNearModel) onNearModel(nearModel);
+
+    // Movimiento con chequeo de colisión dirección por dirección
     if (forward && !back) {
-      playerRef.current.position.addScaledVector(direction, speed);
+      if (!isBlocked(rayOrigin, forwardDir, rayForward, collidableMeshes)) {
+        playerRef.current.position.addScaledVector(forwardDir, speed);
+      }
     }
     if (back && !forward) {
-      playerRef.current.position.addScaledVector(direction, -speed);
+      if (!isBlocked(rayOrigin, backDir, rayBack, collidableMeshes)) {
+        playerRef.current.position.addScaledVector(forwardDir, -speed);
+      }
     }
 
     // 🟢 SALTO
@@ -213,7 +274,7 @@ function Player({ url, playerRef, startPosition = [-45, 0, -45], mobileControls 
       isJumping.current = false;
     }
 
-    // 🔒 LIMITES
+    // 🔒 LIMITES del mapa
     const LIMIT = 60;
     playerRef.current.position.x = Math.max(-LIMIT, Math.min(LIMIT, playerRef.current.position.x));
     playerRef.current.position.z = Math.max(-LIMIT, Math.min(LIMIT, playerRef.current.position.z));
@@ -385,7 +446,7 @@ function Ground() {
 }
 
 // Loaded 3D Model from admin upload with support for multiple formats
-function LoadedModel({ url, onError }) {
+const LoadedModel = React.forwardRef(({ url, onError, onLoaded }, ref) => {
   const [model, setModel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -478,6 +539,7 @@ function LoadedModel({ url, onError }) {
         loadedObject = scene;
         setModel(scene);
         setLoading(false);
+        if (onLoaded) onLoaded(scene);
         
       } catch (err) {
         console.error('Error loading 3D model:', err);
@@ -507,7 +569,7 @@ function LoadedModel({ url, onError }) {
         });
       }
     };
-  }, [url, onError]);
+  }, [url, onError, onLoaded]);
 
   if (error) {
     console.error('Model load error:', error);
@@ -518,11 +580,11 @@ function LoadedModel({ url, onError }) {
     return null;
   }
 
-  return <primitive object={model} />;
-}
+  return <primitive ref={ref} object={model} />;
+});
 
 // Escena principal con soporte para múltiples modelos
-function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrls, onModelError, avatarUrl, mobileControls, viewMode, showCollisions }) {
+function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrls, onModelError, avatarUrl, mobileControls, viewMode, showCollisions, onNearModel }) {
   const defaultPositions = useMemo(() => [
     { x: -20, y: 2, z: 14 },
     { x: 20, y: 2, z: 14 },
@@ -532,7 +594,7 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
   ], []);
   const playerRef = useRef();
   const lastTriggeredRef = useRef(null);
-  const modelsRef = useRef([]); // 🔥 Guardar referencias a modelos
+  const collidersRef = useRef([]); // 🔥 Referencias REALES a los modelos (Object3D)
   
   // 🔥 Todos los modelos centrados en el mismo lugar
   const modelPositions = useMemo(() => {
@@ -549,9 +611,11 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
   useFrame(() => {
     if (!playerRef.current) return;
 
+    // Detección de proximidad a tarjetas de especialidad (sin cambios)
     especialidades.forEach((esp, index) => {
       const savedPos = tarjetaPositions.find(p => p.especialidad_id === esp.especialidad_id);
       const pos = savedPos?.position || defaultPositions[index];
+      if (!pos) return;
 
       const dx = playerRef.current.position.x - pos.x;
       const dz = playerRef.current.position.z - pos.z;
@@ -569,42 +633,9 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
         }
       }
     });
-    
-    // 🔥 DETECCIÓN DE COLISIONES MEJORADA: Avatar vs Modelos
-    if (modelsRef.current.length > 0 && playerRef.current) {
-      modelsRef.current.forEach((model) => {
-        if (!model) return;
-        
-        try {
-          // Calcular bounding box del modelo
-          const bbox = new THREE.Box3().setFromObject(model);
-          const modelSize = bbox.getSize(new THREE.Vector3());
-          const modelCenter = bbox.getCenter(new THREE.Vector3());
-          
-          const playerPos = playerRef.current.position;
-          const playerRadius = 0.8;
-          
-          // Distancia entre centros
-          const dx = playerPos.x - modelCenter.x;
-          const dz = playerPos.z - modelCenter.z;
-          const distance = Math.sqrt(dx * dx + dz * dz);
-          
-          // Distancia de colisión = mitad del tamaño del modelo + radio del avatar
-          const maxModelDim = Math.max(modelSize.x, modelSize.z) / 2;
-          const COLLISION_DISTANCE = maxModelDim + playerRadius;
-          
-          if (distance < COLLISION_DISTANCE && distance > 0.01) {
-            // Empujar avatar hacia atrás de forma más fuerte
-            const angle = Math.atan2(dz, dx);
-            const pushForce = 0.5;
-            playerRef.current.position.x += Math.cos(angle) * pushForce;
-            playerRef.current.position.z += Math.sin(angle) * pushForce;
-          }
-        } catch (e) {
-          // Si hay error calculando bbox, ignorar
-        }
-      });
-    }
+    // 🔥 La detección de colisiones con modelos ahora se hace dentro del Player
+    // usando raycasting por malla, lo cual permite al avatar caminar cerca/alrededor
+    // del edificio respetando paredes reales en vez de una esfera envolvente.
   });
   
   return (
@@ -631,7 +662,9 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
                 url={modelData.url} 
                 onError={onModelError}
                 ref={(ref) => {
-                  if (ref) modelsRef.current[index] = ref;
+                  if (ref) {
+                    collidersRef.current[index] = ref;
+                  }
                 }}
               />
             </Suspense>
@@ -668,6 +701,8 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
           url={avatarUrl}
           startPosition={[-45, 0, -45]}
           mobileControls={mobileControls} 
+          collidersRef={collidersRef}
+          onNearModel={onNearModel}
         />
       )}
       <CameraFollow target={playerRef} viewMode={viewMode} />
@@ -764,6 +799,7 @@ export default function VirtualTour() {
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [viewMode, setViewMode] = useState('third-person'); // 🔥 SISTEMA DE VISTAS
   const [showCollisions, setShowCollisions] = useState(false); // 🔥 Debug colisiones
+  const [isNearModel, setIsNearModel] = useState(false); // 🔥 Avatar cerca de un modelo
   const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
   const [mobileControls, setMobileControls] = useState({
     forward: false,
@@ -903,6 +939,7 @@ export default function VirtualTour() {
                 mobileControls={mobileControls}
                 viewMode={viewMode}
                 showCollisions={showCollisions}
+                onNearModel={setIsNearModel}
               />
             </Suspense>
           </Canvas>
@@ -964,6 +1001,21 @@ export default function VirtualTour() {
           <Box className="w-4 h-4 text-[#ccff00]" />
           <span className="text-white/70 text-sm">{activeModelUrls.length} modelo(s) cargado(s)</span>
         </div>
+      )}
+
+      {/* 🔥 Indicador de proximidad al modelo */}
+      {isNearModel && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 10 }}
+          className="absolute bottom-28 left-1/2 -translate-x-1/2 glass px-4 py-2 rounded-full flex items-center gap-2 border border-[#ccff00]/40"
+        >
+          <span className="w-2 h-2 rounded-full bg-[#ccff00] animate-pulse" />
+          <span className="text-[#ccff00] text-sm font-semibold">
+            Estás cerca del edificio · Usa ↑↓←→ para rodearlo
+          </span>
+        </motion.div>
       )}
 
       {/* View Mode Selector */}
