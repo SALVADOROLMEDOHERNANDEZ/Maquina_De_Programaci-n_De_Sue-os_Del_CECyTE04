@@ -22,7 +22,7 @@ import {
   Loader2,
   AlertCircle,
   BarChart3,
-  Film,
+  FileText,
   Database
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -188,7 +188,7 @@ export default function AdminPanel() {
     }
   };
 
-  const handleActivateModel = async (modelId) => {
+  const handleToggleModel = async (modelId) => {
     try {
       const response = await fetch(`${API_URL}/api/admin/models/${modelId}/activate`, {
         method: 'PUT',
@@ -196,11 +196,15 @@ export default function AdminPanel() {
       });
       
       if (response.ok) {
-        toast.success('Modelo activado');
+        const result = await response.json();
+        toast.success(result.message);
         await loadData();
+      } else {
+        const error = await response.json();
+        toast.error(error.detail || 'Error al cambiar estado del modelo');
       }
     } catch (error) {
-      toast.error('Error al activar modelo');
+      toast.error('Error de conexión');
     }
   };
 
@@ -388,10 +392,10 @@ export default function AdminPanel() {
             <Box className="w-4 h-4 mr-2" /> Modelos 3D
           </Button>
           <Button
-            onClick={() => setActiveTab('multimedia')}
-            className={`rounded-xl ${activeTab === 'multimedia' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setActiveTab('publicaciones')}
+            className={`rounded-xl ${activeTab === 'publicaciones' ? 'btn-primary' : 'btn-secondary'}`}
           >
-            <Film className="w-4 h-4 mr-2" /> Multimedia
+            <FileText className="w-4 h-4 mr-2" /> Publicaciones
           </Button>
           <Button
             onClick={() => setActiveTab('migrations')}
@@ -521,11 +525,22 @@ export default function AdminPanel() {
                           )}
                         </div>
                         <div className="flex items-center gap-2">
+                          {model.is_active && (
+                            <Button
+                              size="sm"
+                              onClick={() => handleToggleModel(model.model_id)}
+                              className="btn-secondary rounded-lg"
+                              title="Desactivar modelo"
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          )}
                           {!model.is_active && (
                             <Button
                               size="sm"
-                              onClick={() => handleActivateModel(model.model_id)}
+                              onClick={() => handleToggleModel(model.model_id)}
                               className="btn-secondary rounded-lg"
+                              title="Activar modelo"
                             >
                               <Check className="w-4 h-4" />
                             </Button>
@@ -535,6 +550,7 @@ export default function AdminPanel() {
                             variant="destructive"
                             onClick={() => handleDeleteModel(model.model_id)}
                             className="rounded-lg"
+                            title="Eliminar modelo"
                           >
                             <Trash2 className="w-4 h-4" />
                           </Button>
@@ -555,8 +571,8 @@ export default function AdminPanel() {
           </div>
         )}
 
-        {/* Multimedia Tab */}
-        {activeTab === 'multimedia' && (
+        {/* Publicaciones Tab */}
+        {activeTab === 'publicaciones' && (
           <div>
             <MediaManager onDataChange={loadData} />
           </div>

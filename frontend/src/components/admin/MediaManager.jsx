@@ -28,7 +28,7 @@ export default function MediaManager({ onDataChange }) {
   const [selectedFile, setSelectedFile] = useState(null);
   
   // Formulario
-  const [tipo, setTipo] = useState('foto');
+  const tipo = 'publicacion';
   const [titulo, setTitulo] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [categoria, setCategoria] = useState('general');
@@ -37,7 +37,7 @@ export default function MediaManager({ onDataChange }) {
   const loadMultimedia = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/api/admin/multimedia`, {
+      const response = await fetch(`${API_URL}/api/admin/multimedia?tipo=publicacion`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -45,8 +45,8 @@ export default function MediaManager({ onDataChange }) {
         setMultimedia(data);
       }
     } catch (error) {
-      console.error('Load multimedia error:', error);
-      toast.error('Error al cargar contenido');
+      console.error('Load publications error:', error);
+      toast.error('Error al cargar publicaciones');
     } finally {
       setLoading(false);
     }
@@ -177,13 +177,8 @@ export default function MediaManager({ onDataChange }) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  const getTypeIcon = (type) => {
-    switch(type) {
-      case 'video': return <Video className="w-5 h-5 text-blue-400" />;
-      case 'foto': return <Image className="w-5 h-5 text-green-400" />;
-      case 'publicacion': return <FileText className="w-5 h-5 text-purple-400" />;
-      default: return <FileUp className="w-5 h-5" />;
-    }
+const getTypeIcon = () => {
+    return <FileText className="w-5 h-5 text-purple-400" />;
   };
 
   if (loading && multimedia.length === 0) {
@@ -204,23 +199,10 @@ export default function MediaManager({ onDataChange }) {
       >
         <h2 className="text-xl font-['Syne'] font-bold mb-4 flex items-center gap-2">
           <FileUp className="w-5 h-5 text-[#00f0ff]" />
-          Subir Contenido Multimedia
+          Subir Publicación
         </h2>
 
-        <div className="grid md:grid-cols-2 gap-4 mb-4">
-          <div>
-            <Label className="text-white/70">Tipo</Label>
-            <select
-              value={tipo}
-              onChange={(e) => setTipo(e.target.value)}
-              className="input-cyber w-full rounded-xl"
-            >
-              <option value="video">Video</option>
-              <option value="foto">Foto</option>
-              <option value="publicacion">Publicación</option>
-            </select>
-          </div>
-
+        <div className="grid md:grid-cols-1 gap-4 mb-4">
           <div>
             <Label className="text-white/70">Categoría</Label>
             <select
@@ -276,7 +258,7 @@ export default function MediaManager({ onDataChange }) {
               type="file"
               onChange={handleFileSelect}
               className="hidden"
-              accept={tipo === 'video' ? '.mp4,.webm,.avi,.mov,.mkv' : tipo === 'foto' ? '.jpg,.jpeg,.png,.gif,.webp' : '.jpg,.jpeg,.png,.gif,.webp,.pdf,.txt'}
+              accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt"
             />
             <div className="flex flex-col items-center justify-center py-4">
               {selectedFile ? (
@@ -306,11 +288,11 @@ export default function MediaManager({ onDataChange }) {
           ) : (
             <Upload className="w-4 h-4 mr-2" />
           )}
-          Subir Contenido
+          Subir Publicación
         </Button>
       </motion.div>
 
-      {/* Multimedia List */}
+      {/* Publicaciones List */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -318,12 +300,12 @@ export default function MediaManager({ onDataChange }) {
         className="glass-card rounded-2xl p-6"
       >
         <h2 className="text-xl font-['Syne'] font-bold mb-4">
-          Contenido Multimedia ({multimedia.length})
+          Publicaciones ({multimedia.length})
         </h2>
 
         {multimedia.length === 0 ? (
           <p className="text-white/50 text-center py-8">
-            No hay contenido. Sube tu primer contenido multimedia.
+            No hay publicaciones. Sube tu primera publicación.
           </p>
         ) : (
           <div className="space-y-3">

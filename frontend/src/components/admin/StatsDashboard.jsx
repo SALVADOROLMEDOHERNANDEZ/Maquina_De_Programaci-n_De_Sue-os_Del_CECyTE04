@@ -5,7 +5,7 @@ import { Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/button';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } from 'recharts';
 
-const API_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000/api';
+const API_URL = process.env.REACT_APP_BACKEND_URL;
 
 const COLORS = ['#00f0ff', '#7c3aed', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
@@ -14,23 +14,26 @@ export default function StatsDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState(null);
 
   const loadStats = async (showRefresh = false) => {
     try {
       if (showRefresh) setRefreshing(true);
       else setLoading(true);
       
-      const response = await fetch(`${API_URL}/admin/statistics`, {
-        credentials: 'include',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('admin_token') || ''}`,
-        }
+      const response = await fetch(`${API_URL}/api/admin/statistics`, {
+        credentials: 'include'
       });
 
-      if (!response.ok) throw new Error('Failed to load statistics');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+      }
 
       const data = await response.json();
       setStats(data);
+      setLastUpdate(new Date());
       setError(null);
     } catch (err) {
       console.error('Load stats error:', err);
@@ -58,13 +61,24 @@ export default function StatsDashboard() {
 
   useEffect(() => {
     loadStats();
-    // Recargar estadísticas cada 60 segundos
-    const interval = setInterval(() => loadStats(true), 60000);
-    return () => clearInterval(interval);
-  }, []);
+    
+    let interval;
+    if (autoRefresh) {
+      // Actualizar cada 30 segundos para datos en tiempo real óptimos
+      interval = setInterval(() => loadStats(true), 30000);
+    }
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [autoRefresh]);
 
   const handleRefresh = () => {
     loadStats(true);
+  };
+
+  const toggleAutoRefresh = () => {
+    setAutoRefresh(!autoRefresh);
   };
 
   if (loading && !stats) {
@@ -109,26 +123,51 @@ export default function StatsDashboard() {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm">
-          ⚠️ Error al cargar estadísticas: {error}
+        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+          <div className="flex items-center gap-2 text-red-400 mb-2">
+            <span className="text-lg">⚠️</span>
+            <span className="font-medium">Error al cargar estadísticas</span>
+          </div>
+          <p className="text-red-300 text-sm">{error}</p>
+          <p className="text-red-400/70 text-xs mt-2">
+            Verifica que el backend esté ejecutándose en {process.env.REACT_APP_BACKEND_URL || 'localhost:8001'}
+          </p>
         </div>
       )}
 
       {/* Header con refresh */}
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-['Syne'] font-bold">Dashboard de Estadísticas</h2>
-        <Button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="btn-secondary rounded-xl"
-        >
-          {refreshing ? (
-            <Loader2 className="w-4 h-4 animate-spin mr-2" />
-          ) : (
-            <RefreshCw className="w-4 h-4 mr-2" />
+        <div>
+          <h2 className="text-2xl font-['Syne'] font-bold">Dashboard de Estadísticas</h2>
+          {lastUpdate && (
+            <p className="text-white/50 text-sm mt-1">
+              Última actualización: {lastUpdate.toLocaleTimeString()}
+              {autoRefresh && <span className="text-[#00f0ff] ml-2">• Auto-refresh activado</span>}
+            </p>
           )}
-          Actualizar
-        </Button>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button
+            onClick={toggleAutoRefresh}
+            variant="outline"
+            size="sm"
+            className={`rounded-xl border-white/20 ${autoRefresh ? 'bg-[#00f0ff]/20 border-[#00f0ff]' : ''}`}
+          >
+            {autoRefresh ? '⏸️' : '▶️'} Auto-refresh
+          </Button>
+          <Button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="btn-secondary rounded-xl"
+          >
+            {refreshing ? (
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            Actualizar
+          </Button>
+        </div>
       </div>
       
       {/* Estadísticas principales */}
