@@ -1,10 +1,15 @@
-import React, { useState, useRef, useEffect, Suspense, useMemo } from 'react';
+import React, { useState, useRef, useEffect, Suspense, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Stars, Environment } from '@react-three/drei';
+import { OrbitControls, Stars } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import * as THREE from 'three';
+import {
+  computeBoundsTree,
+  disposeBoundsTree,
+  acceleratedRaycast,
+} from 'three-mesh-bvh';
 import { 
   ArrowLeft, 
   Info, 
@@ -22,7 +27,209 @@ import {
   AlertCircle
 } from 'lucide-react';
 
+if (!THREE.BufferGeometry.prototype.computeBoundsTree) {
+  THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+  THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+  THREE.Mesh.prototype.raycast = acceleratedRaycast;
+}
+
 const API_URL = process.env.REACT_APP_BACKEND_URL;
+
+/** Referencia estable para no disparar efectos del avatar al re-renderizar (p. ej. al abrir panel de especialidad). */
+const AVATAR_SPAWN_POSITION = Object.freeze([-45, 0, -45]);
+
+/** Radio aproximado del avatar en el plano XZ (rayos / márgenes). */
+const PLAYER_COLLISION_RADIUS = 0.85;
+/** Altura del torso para rayos de pared (desde los pies del grupo jugador). */
+const PLAYER_WAIST_Y = 1.0;
+/** Normales con |Y| mayores se tratan como suelo/ rampa, no como pared. */
+const WALL_NORMAL_Y_CUTOFF = 0.55;
+/** Sonda vertical debajo de los pies (evita chocar con techos por encima). */
+const GROUND_RAY_START_ABOVE_FEET = 0.4;
+const GROUND_RAY_LENGTH = 200;
+
+const _rayOrigin = new THREE.Vector3();
+const _rayDir = new THREE.Vector3();
+const _worldNormal = new THREE.Vector3();
+const _boxTmp = new THREE.Box3();
+const _scratchGround = [];
+const _scratchWall = [];
+
+function ensureGeometryBVH(mesh) {
+  const g = mesh.geometry;
+  if (!g || g.boundsTree) return;
+  if (!g.boundingBox) g.computeBoundingBox();
+  if (!g.boundingSphere) g.computeBoundingSphere();
+  try {
+    g.computeBoundsTree();
+  } catch {
+    /* geometría vacía o no indexada */
+  }
+}
+
+/** Una sola vez al cargar modelos / suelo: lista de mallas + AABB mundo (sin recalcular cada frame). */
+function rebuildCollisionMeshList(modelsRef, activeModelsCount, floorMesh, outMeshes) {
+  outMeshes.length = 0;
+  for (let i = 0; i < activeModelsCount; i++) {
+    const root = modelsRef?.current?.[i];
+    if (!root) continue;
+    root.updateMatrixWorld(true);
+    root.traverse((child) => {
+      if (!child.isMesh || !child.geometry || !child.visible) return;
+      ensureGeometryBVH(child);
+      _boxTmp.setFromObject(child);
+      child.userData._colWorldBox = _boxTmp.clone();
+      outMeshes.push(child);
+    });
+  }
+  if (floorMesh) {
+    floorMesh.updateMatrixWorld(true);
+    ensureGeometryBVH(floorMesh);
+    _boxTmp.setFromObject(floorMesh);
+    floorMesh.userData._colWorldBox = _boxTmp.clone();
+    outMeshes.push(floorMesh);
+  }
+}
+
+function filterMeshesForGround(all, px, pz, py, out) {
+  out.length = 0;
+  const margin = 1.25;
+  for (let i = 0; i < all.length; i++) {
+    const m = all[i];
+    const b = m.userData._colWorldBox;
+    if (!b) continue;
+    if (b.min.x - margin > px || b.max.x + margin < px || b.min.z - margin > pz || b.max.z + margin < pz) continue;
+    if (b.max.y < py - 4) continue;
+    out.push(m);
+  }
+  return out;
+}
+
+function filterMeshesForWallX(all, ox, oy, oz, sign, far, out) {
+  out.length = 0;
+  const pad = 1.5;
+  const segMinX = sign > 0 ? ox : ox - far;
+  const segMaxX = sign > 0 ? ox + far : ox;
+  const segMinZ = oz - pad;
+  const segMaxZ = oz + pad;
+  const yLo = oy + PLAYER_WAIST_Y - 1.2;
+  const yHi = oy + PLAYER_WAIST_Y + 1.2;
+  for (let i = 0; i < all.length; i++) {
+    const m = all[i];
+    const b = m.userData._colWorldBox;
+    if (!b) continue;
+    if (b.max.x < segMinX || b.min.x > segMaxX) continue;
+    if (b.max.z < segMinZ || b.min.z > segMaxZ) continue;
+    if (b.max.y < yLo || b.min.y > yHi) continue;
+    out.push(m);
+  }
+  return out;
+}
+
+function filterMeshesForWallZ(all, ox, oy, oz, sign, far, out) {
+  out.length = 0;
+  const pad = 1.5;
+  const segMinZ = sign > 0 ? oz : oz - far;
+  const segMaxZ = sign > 0 ? oz + far : oz;
+  const segMinX = ox - pad;
+  const segMaxX = ox + pad;
+  const yLo = oy + PLAYER_WAIST_Y - 1.2;
+  const yHi = oy + PLAYER_WAIST_Y + 1.2;
+  for (let i = 0; i < all.length; i++) {
+    const m = all[i];
+    const b = m.userData._colWorldBox;
+    if (!b) continue;
+    if (b.max.z < segMinZ || b.min.z > segMaxZ) continue;
+    if (b.max.x < segMinX || b.min.x > segMaxX) continue;
+    if (b.max.y < yLo || b.min.y > yHi) continue;
+    out.push(m);
+  }
+  return out;
+}
+
+function worldNormalFromHit(hit) {
+  return _worldNormal
+    .copy(hit.face.normal)
+    .transformDirection(hit.object.matrixWorld)
+    .normalize();
+}
+
+/** Primera superficie bajo los pies (rayo corto desde justo encima del jugador). */
+function raycastGroundY(x, y, z, meshes, raycaster) {
+  if (!meshes.length) return null;
+  _rayOrigin.set(x, y + GROUND_RAY_START_ABOVE_FEET, z);
+  _rayDir.set(0, -1, 0);
+  raycaster.set(_rayOrigin, _rayDir);
+  raycaster.far = GROUND_RAY_LENGTH;
+  const hits = raycaster.intersectObjects(meshes, false);
+  for (let i = 0; i < hits.length; i++) {
+    const h = hits[i];
+    if (h.point.y > y + 0.5) continue;
+    return h.point.y;
+  }
+  return null;
+}
+
+/**
+ * Rayo horizontal en X o Z. true = bloqueado (pared).
+ * Ignora superficies casi horizontales (suelo / bordes de losa).
+ */
+function axisWallBlocked(px, py, pz, axis, sign, distance, meshes, raycaster) {
+  if (!meshes.length || distance < 1e-6) return false;
+  const far = distance + PLAYER_COLLISION_RADIUS + 0.08;
+  _rayOrigin.set(px, py + PLAYER_WAIST_Y, pz);
+  if (axis === 'x') _rayOrigin.x += sign * 0.06;
+  else _rayOrigin.z += sign * 0.06;
+  _rayDir.set(axis === 'x' ? sign : 0, 0, axis === 'z' ? sign : 0);
+  raycaster.set(_rayOrigin, _rayDir);
+  raycaster.far = far;
+  const hits = raycaster.intersectObjects(meshes, false);
+  for (let i = 0; i < hits.length; i++) {
+    const h = hits[i];
+    if (h.distance > far - 1e-4) continue;
+    const n = worldNormalFromHit(h);
+    if (Math.abs(n.y) > WALL_NORMAL_Y_CUTOFF) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Resuelve la posición XZ del jugador contra cajas alineadas a ejes (world space).
+ * Cada caja es el AABB del modelo; se infla en XZ por el radio del jugador (Minkowski en el plano).
+ * Varias iteraciones reducen quedarse atascado entre dos cajas.
+ */
+function resolvePlayerXZAgainstBoxes(position, boxes, radius, iterations = 4) {
+  if (!boxes.length) return;
+  const p = position;
+  for (let iter = 0; iter < iterations; iter++) {
+    for (let b = 0; b < boxes.length; b++) {
+      const box = boxes[b];
+      const minX = box.min.x - radius;
+      const maxX = box.max.x + radius;
+      const minZ = box.min.z - radius;
+      const maxZ = box.max.z + radius;
+      if (p.x >= minX && p.x <= maxX && p.z >= minZ && p.z <= maxZ) {
+        const dLeft = p.x - minX;
+        const dRight = maxX - p.x;
+        const dDown = p.z - minZ;
+        const dUp = maxZ - p.z;
+        const m = Math.min(dLeft, dRight, dDown, dUp);
+        if (m === dLeft) p.x = minX;
+        else if (m === dRight) p.x = maxX;
+        else if (m === dDown) p.z = minZ;
+        else p.z = maxZ;
+      }
+    }
+  }
+}
+
+/** AABB aproximado (world) para el monumento decorativo cuando no hay modelo GLB del plantel. */
+const CENTRAL_MONUMENT_COLLISION_BOX = new THREE.Box3(
+  new THREE.Vector3(-10, 0, -10),
+  new THREE.Vector3(10, 13, 10)
+);
+
 //Controles
 function useKeyboard() {
   const keys = useRef({});
@@ -108,8 +315,12 @@ function SpecialtyCard3D({ especialidad, position, isSelected, onSelect }) {
   );
 }
 // Avatar simple
-const Avatar3D = React.forwardRef(({ url, startPosition = [-50, 0, -50] }, ref) => {
+const Avatar3D = React.forwardRef(({ url, startPosition = AVATAR_SPAWN_POSITION }, ref) => {
   const [model, setModel] = useState();
+  const spawnOnceRef = useRef(null);
+  if (spawnOnceRef.current === null) {
+    spawnOnceRef.current = [startPosition[0], startPosition[1], startPosition[2]];
+  }
 
   useEffect(() => {
     const load = async () => {
@@ -129,8 +340,8 @@ const Avatar3D = React.forwardRef(({ url, startPosition = [-50, 0, -50] }, ref) 
         const group = new THREE.Group();
         group.add(scene);
 
-        // 🔥 mantener la posición original del GLB del avatar
-        group.position.set(startPosition[0], startPosition[1], startPosition[2]);
+        const sp = spawnOnceRef.current;
+        group.position.set(sp[0], sp[1], sp[2]);
 
         // 🔥 levanta el avatar para que no quede bajo el suelo
         const box = new THREE.Box3().setFromObject(scene);
@@ -141,36 +352,62 @@ const Avatar3D = React.forwardRef(({ url, startPosition = [-50, 0, -50] }, ref) 
     };
 
     load();
-  }, [url, startPosition]);
+  }, [url]);
 
   if (!model) return null;
 
   return <primitive ref={ref} object={model} />;
 });
 //Movimiento del Avatar
-function Player({ url, playerRef, startPosition = [-45, 0, -45], mobileControls }) {
+function Player({
+  url,
+  playerRef,
+  startPosition = AVATAR_SPAWN_POSITION,
+  mobileControls,
+  modelsRef,
+  activeModelsCount,
+  floorMeshRef,
+  especialidades,
+  tarjetaPositions,
+  defaultPositions,
+  onSelectEspecialidad,
+  lastTriggeredRef,
+}) {
   const keys = useKeyboard();
   const lightRef = useRef();
+  const raycaster = useMemo(() => {
+    const r = new THREE.Raycaster();
+    r.firstHitOnly = true;
+    return r;
+  }, []);
+  const collisionMeshesCache = useRef([]);
+  const collisionCacheSig = useRef('');
 
   const velocityY = useRef(0);
   const isJumping = useRef(false);
   const initialized = useRef(false);
+  const spawnOnceRef = useRef(null);
+  if (spawnOnceRef.current === null) {
+    spawnOnceRef.current = [startPosition[0], startPosition[1], startPosition[2]];
+  }
 
   useEffect(() => {
     const checkPosition = setInterval(() => {
       if (playerRef.current && !initialized.current) {
-        playerRef.current.position.set(startPosition[0], startPosition[1], startPosition[2]);
+        const sp = spawnOnceRef.current;
+        playerRef.current.position.set(sp[0], sp[1], sp[2]);
         initialized.current = true;
       }
     }, 50);
 
     return () => clearInterval(checkPosition);
-  }, [playerRef, startPosition]);
+  }, [playerRef]);
 
   useFrame(() => {
     if (!playerRef.current) return;
 
     const speed = 0.3;
+    const pos = playerRef.current.position;
 
     const forward = keys.current['arrowup'] || mobileControls?.forward;
     const back = keys.current['arrowdown'] || mobileControls?.back;
@@ -189,11 +426,67 @@ function Player({ url, playerRef, startPosition = [-45, 0, -45], mobileControls 
       playerRef.current.rotation.y
     );
 
+    const useMeshController = activeModelsCount > 0;
+    if (!useMeshController) {
+      collisionMeshesCache.current.length = 0;
+      collisionCacheSig.current = '';
+    }
+    if (useMeshController) {
+      let sig = `${activeModelsCount}`;
+      for (let i = 0; i < activeModelsCount; i++) {
+        const r = modelsRef?.current?.[i];
+        sig += r ? `,${r.uuid}` : ',0';
+      }
+      sig += `|${floorMeshRef?.current?.uuid ?? '-'}`;
+      if (sig !== collisionCacheSig.current) {
+        rebuildCollisionMeshList(
+          modelsRef,
+          activeModelsCount,
+          floorMeshRef?.current ?? null,
+          collisionMeshesCache.current
+        );
+        collisionCacheSig.current = sig;
+      }
+    }
+    const collisionMeshes = collisionMeshesCache.current;
+
+    let moveX = 0;
+    let moveZ = 0;
     if (forward && !back) {
-      playerRef.current.position.addScaledVector(direction, speed);
+      moveX += direction.x * speed;
+      moveZ += direction.z * speed;
     }
     if (back && !forward) {
-      playerRef.current.position.addScaledVector(direction, -speed);
+      moveX -= direction.x * speed;
+      moveZ -= direction.z * speed;
+    }
+
+    if (useMeshController) {
+      if (collisionMeshes.length) {
+        const py = pos.y;
+        if (moveX !== 0) {
+          const sx = Math.sign(moveX);
+          const far = Math.abs(moveX) + PLAYER_COLLISION_RADIUS + 0.08;
+          filterMeshesForWallX(collisionMeshes, pos.x, py, pos.z, sx, far, _scratchWall);
+          if (!axisWallBlocked(pos.x, py, pos.z, 'x', sx, Math.abs(moveX), _scratchWall, raycaster)) {
+            pos.x += moveX;
+          }
+        }
+        if (moveZ !== 0) {
+          const sz = Math.sign(moveZ);
+          const far = Math.abs(moveZ) + PLAYER_COLLISION_RADIUS + 0.08;
+          filterMeshesForWallZ(collisionMeshes, pos.x, py, pos.z, sz, far, _scratchWall);
+          if (!axisWallBlocked(pos.x, py, pos.z, 'z', sz, Math.abs(moveZ), _scratchWall, raycaster)) {
+            pos.z += moveZ;
+          }
+        }
+      } else {
+        if (moveX !== 0) pos.x += moveX;
+        if (moveZ !== 0) pos.z += moveZ;
+      }
+    } else {
+      if (moveX !== 0) pos.x += moveX;
+      if (moveZ !== 0) pos.z += moveZ;
     }
 
     // 🟢 SALTO
@@ -202,21 +495,69 @@ function Player({ url, playerRef, startPosition = [-45, 0, -45], mobileControls 
       isJumping.current = true;
     }
 
-    // gravedad
     velocityY.current -= 0.02;
-    playerRef.current.position.y += velocityY.current;
+    pos.y += velocityY.current;
 
-    // suelo
-    if (playerRef.current.position.y <= 0) {
-      playerRef.current.position.y = 0;
-      velocityY.current = 0;
-      isJumping.current = false;
+    if (useMeshController) {
+      if (collisionMeshes.length) {
+        filterMeshesForGround(collisionMeshes, pos.x, pos.z, pos.y, _scratchGround);
+        const gy = raycastGroundY(pos.x, pos.y, pos.z, _scratchGround, raycaster);
+        if (gy != null) {
+          if (pos.y < gy - 0.02) {
+            pos.y = gy;
+            velocityY.current = Math.max(0, velocityY.current);
+            isJumping.current = false;
+          } else if (pos.y <= gy + 0.12 && velocityY.current <= 0) {
+            pos.y = gy;
+            velocityY.current = 0;
+            isJumping.current = false;
+          }
+        } else if (pos.y < 0) {
+          pos.y = 0;
+          velocityY.current = 0;
+          isJumping.current = false;
+        }
+      } else if (pos.y <= 0) {
+        pos.y = 0;
+        velocityY.current = 0;
+        isJumping.current = false;
+      }
+    } else {
+      if (pos.y <= 0) {
+        pos.y = 0;
+        velocityY.current = 0;
+        isJumping.current = false;
+      }
     }
 
     // 🔒 LIMITES
     const LIMIT = 60;
-    playerRef.current.position.x = Math.max(-LIMIT, Math.min(LIMIT, playerRef.current.position.x));
-    playerRef.current.position.z = Math.max(-LIMIT, Math.min(LIMIT, playerRef.current.position.z));
+    pos.x = Math.max(-LIMIT, Math.min(LIMIT, pos.x));
+    pos.z = Math.max(-LIMIT, Math.min(LIMIT, pos.z));
+
+    if (!useMeshController) {
+      const obstacleBoxes = [CENTRAL_MONUMENT_COLLISION_BOX];
+      resolvePlayerXZAgainstBoxes(pos, obstacleBoxes, PLAYER_COLLISION_RADIUS);
+    }
+
+    // Proximidad a tarjetas de especialidades (usa posición ya resuelta)
+    especialidades.forEach((esp, index) => {
+      const savedPos = tarjetaPositions.find((p) => p.especialidad_id === esp.especialidad_id);
+      const pos = savedPos?.position || defaultPositions[index] || { x: 0, y: 2, z: 0 };
+
+      const dx = playerRef.current.position.x - pos.x;
+      const dz = playerRef.current.position.z - pos.z;
+      const distance = Math.sqrt(dx * dx + dz * dz);
+
+      if (distance < 3) {
+        if (lastTriggeredRef.current !== esp.especialidad_id) {
+          lastTriggeredRef.current = esp.especialidad_id;
+          onSelectEspecialidad(esp.especialidad_id);
+        }
+      } else if (lastTriggeredRef.current === esp.especialidad_id) {
+        lastTriggeredRef.current = null;
+      }
+    });
 
     // 💡 LUZ SIGUE AL AVATAR
     if (lightRef.current) {
@@ -371,12 +712,12 @@ function CentralMonument() {
   );
 }
 
-// Ground grid
-function Ground() {
+// Ground grid (plano en Y=0 para raycast de apoyo alineado con los pies del avatar)
+function Ground({ floorMeshRef }) {
   return (
     <group>
       <gridHelper args={[140, 70, '#00f0ff', '#1a1a3a']} position={[0, 0, 0]} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]}>
+      <mesh ref={floorMeshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
         <planeGeometry args={[140, 140]} />
         <meshStandardMaterial color="#040812" roughness={0.9} />
       </mesh>
@@ -385,10 +726,15 @@ function Ground() {
 }
 
 // Loaded 3D Model from admin upload with support for multiple formats
-function LoadedModel({ url, onError }) {
+const LoadedModel = React.forwardRef(function LoadedModel({ url, onError }, ref) {
   const [model, setModel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
   
   useEffect(() => {
     let mounted = true;
@@ -484,7 +830,7 @@ function LoadedModel({ url, onError }) {
         if (mounted) {
           setError(err.message || 'Error al cargar el modelo 3D');
           setLoading(false);
-          if (onError) onError(err);
+          if (onErrorRef.current) onErrorRef.current(err);
         }
       }
     };
@@ -496,7 +842,12 @@ function LoadedModel({ url, onError }) {
       // Cleanup
       if (loadedObject) {
         loadedObject.traverse((child) => {
-          if (child.geometry) child.geometry.dispose();
+          if (child.geometry) {
+            if (typeof child.geometry.disposeBoundsTree === 'function') {
+              child.geometry.disposeBoundsTree();
+            }
+            child.geometry.dispose();
+          }
           if (child.material) {
             if (Array.isArray(child.material)) {
               child.material.forEach(m => m.dispose());
@@ -507,7 +858,7 @@ function LoadedModel({ url, onError }) {
         });
       }
     };
-  }, [url, onError]);
+  }, [url]);
 
   if (error) {
     console.error('Model load error:', error);
@@ -518,11 +869,11 @@ function LoadedModel({ url, onError }) {
     return null;
   }
 
-  return <primitive object={model} />;
-}
+  return <primitive ref={ref} object={model} />;
+});
 
 // Escena principal con soporte para múltiples modelos
-function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrls, onModelError, avatarUrl, mobileControls, viewMode, showCollisions }) {
+function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tarjetaPositions, activeModelUrls, onModelError, avatarUrl, mobileControls, viewMode }) {
   const defaultPositions = useMemo(() => [
     { x: -20, y: 2, z: 14 },
     { x: 20, y: 2, z: 14 },
@@ -533,7 +884,14 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
   const playerRef = useRef();
   const lastTriggeredRef = useRef(null);
   const modelsRef = useRef([]); // 🔥 Guardar referencias a modelos
-  
+  const floorMeshRef = useRef(null);
+
+  // Mantener arreglo de refs consistente aunque haya re-renders (evita frames con null).
+  useEffect(() => {
+    const len = activeModelUrls?.length || 0;
+    if (modelsRef.current.length !== len) modelsRef.current.length = len;
+  }, [activeModelUrls]);
+
   // 🔥 Todos los modelos centrados en el mismo lugar
   const modelPositions = useMemo(() => {
     if (!activeModelUrls || activeModelUrls.length === 0) return [];
@@ -545,67 +903,6 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
       z: 0
     }));
   }, [activeModelUrls]);
-  
-  useFrame(() => {
-    if (!playerRef.current) return;
-
-    especialidades.forEach((esp, index) => {
-      const savedPos = tarjetaPositions.find(p => p.especialidad_id === esp.especialidad_id);
-      const pos = savedPos?.position || defaultPositions[index];
-
-      const dx = playerRef.current.position.x - pos.x;
-      const dz = playerRef.current.position.z - pos.z;
-
-      const distance = Math.sqrt(dx * dx + dz * dz);
-
-      if (distance < 3) {
-        if (lastTriggeredRef.current !== esp.especialidad_id) {
-          lastTriggeredRef.current = esp.especialidad_id;
-          onSelectEspecialidad(esp.especialidad_id);
-        }
-      } else {
-        if (lastTriggeredRef.current === esp.especialidad_id) {
-          lastTriggeredRef.current = null;
-        }
-      }
-    });
-    
-    // 🔥 DETECCIÓN DE COLISIONES MEJORADA: Avatar vs Modelos
-    if (modelsRef.current.length > 0 && playerRef.current) {
-      modelsRef.current.forEach((model) => {
-        if (!model) return;
-        
-        try {
-          // Calcular bounding box del modelo
-          const bbox = new THREE.Box3().setFromObject(model);
-          const modelSize = bbox.getSize(new THREE.Vector3());
-          const modelCenter = bbox.getCenter(new THREE.Vector3());
-          
-          const playerPos = playerRef.current.position;
-          const playerRadius = 0.8;
-          
-          // Distancia entre centros
-          const dx = playerPos.x - modelCenter.x;
-          const dz = playerPos.z - modelCenter.z;
-          const distance = Math.sqrt(dx * dx + dz * dz);
-          
-          // Distancia de colisión = mitad del tamaño del modelo + radio del avatar
-          const maxModelDim = Math.max(modelSize.x, modelSize.z) / 2;
-          const COLLISION_DISTANCE = maxModelDim + playerRadius;
-          
-          if (distance < COLLISION_DISTANCE && distance > 0.01) {
-            // Empujar avatar hacia atrás de forma más fuerte
-            const angle = Math.atan2(dz, dx);
-            const pushForce = 0.5;
-            playerRef.current.position.x += Math.cos(angle) * pushForce;
-            playerRef.current.position.z += Math.sin(angle) * pushForce;
-          }
-        } catch (e) {
-          // Si hay error calculando bbox, ignorar
-        }
-      });
-    }
-  });
   
   return (
     <>
@@ -620,28 +917,23 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
       <pointLight position={[0, 5, 5]} intensity={2} />
       <Stars radius={200} depth={60} count={3000} factor={4} saturation={0} fade speed={1} />
       
-      <Ground />
+      <Ground floorMeshRef={floorMeshRef} />
       
       {/* 🔥 RENDERIZAR TODOS LOS MODELOS ACTIVOS */}
       {activeModelUrls && activeModelUrls.length > 0 ? (
         activeModelUrls.map((modelData, index) => (
           <group key={modelData.id} position={[modelPositions[index]?.x || 0, modelPositions[index]?.y || 0, modelPositions[index]?.z || 0]}>
             <Suspense fallback={null}>
-              <LoadedModel 
-                url={modelData.url} 
+              <LoadedModel
+                url={modelData.url}
                 onError={onModelError}
-                ref={(ref) => {
-                  if (ref) modelsRef.current[index] = ref;
+                ref={(r) => {
+                  // React puede llamar el ref con null entre renders; no lo sobrescribimos para
+                  // que la colisión no "pierda" el modelo por 1 frame.
+                  if (r) modelsRef.current[index] = r;
                 }}
               />
             </Suspense>
-            {/* 🔥 DEBUG: Mostrar colisión si está activado */}
-            {showCollisions && (
-              <mesh position={[0, 5, 0]}>
-                <sphereGeometry args={[8, 16, 16]} />
-                <meshBasicMaterial color="red" wireframe transparent opacity={0.3} />
-              </mesh>
-            )}
           </group>
         ))
       ) : (
@@ -663,11 +955,19 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
         );
       })}
       {avatarUrl && (
-        <Player 
+        <Player
           playerRef={playerRef}
           url={avatarUrl}
-          startPosition={[-45, 0, -45]}
-          mobileControls={mobileControls} 
+          startPosition={AVATAR_SPAWN_POSITION}
+          mobileControls={mobileControls}
+          modelsRef={modelsRef}
+          activeModelsCount={activeModelUrls?.length || 0}
+          floorMeshRef={floorMeshRef}
+          especialidades={especialidades}
+          tarjetaPositions={tarjetaPositions}
+          defaultPositions={defaultPositions}
+          onSelectEspecialidad={onSelectEspecialidad}
+          lastTriggeredRef={lastTriggeredRef}
         />
       )}
       <CameraFollow target={playerRef} viewMode={viewMode} />
@@ -763,7 +1063,6 @@ export default function VirtualTour() {
   const [modelError, setModelError] = useState(null);
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [viewMode, setViewMode] = useState('third-person'); // 🔥 SISTEMA DE VISTAS
-  const [showCollisions, setShowCollisions] = useState(false); // 🔥 Debug colisiones
   const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
   const [mobileControls, setMobileControls] = useState({
     forward: false,
@@ -836,15 +1135,15 @@ export default function VirtualTour() {
     fetchData();
   }, []);
 
-  const handleSelectEspecialidad = (espId) => {
+  const handleSelectEspecialidad = useCallback((espId) => {
     setSelectedEspecialidad(prev => prev === espId ? null : espId);
-  };
+  }, []);
 
-  const handleModelError = (error) => {
+  const handleModelError = useCallback((error) => {
     console.error('Model loading error:', error);
     setModelError('Error al cargar el modelo 3D del plantel');
     setModelLoading(false);
-  };
+  }, []);
 
   const selectedEsp = especialidades.find(e => e.especialidad_id === selectedEspecialidad);
 
@@ -902,7 +1201,6 @@ export default function VirtualTour() {
                 avatarUrl={avatarUrl}
                 mobileControls={mobileControls}
                 viewMode={viewMode}
-                showCollisions={showCollisions}
               />
             </Suspense>
           </Canvas>
