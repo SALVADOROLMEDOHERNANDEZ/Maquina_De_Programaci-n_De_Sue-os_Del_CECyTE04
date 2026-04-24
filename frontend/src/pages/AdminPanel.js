@@ -226,19 +226,36 @@ export default function AdminPanel() {
     }
   };
 
-  const handlePositionChange = (tarjetaId, field, subfield, value) => {
-    setTarjetaPositions(prev => prev.map(pos => {
-      if (pos.tarjeta_id === tarjetaId) {
+  const handlePositionChange = (tarjetaId, especialidadId, field, subfield, value) => {
+    setTarjetaPositions(prev => {
+      const nextValue = parseFloat(value) || 0;
+      const existing = prev.find(pos => pos.tarjeta_id === tarjetaId);
+
+      if (!existing) {
+        return [
+          ...prev,
+          {
+            tarjeta_id: tarjetaId,
+            especialidad_id: especialidadId,
+            position: field === 'position' ? { x: 0, y: 0, z: 0, [subfield]: nextValue } : { x: 0, y: 0, z: 0 },
+            rotation: field === 'rotation' ? { x: 0, y: 0, z: 0, [subfield]: nextValue } : { x: 0, y: 0, z: 0 },
+            scale: 1.0,
+            model_id: null
+          }
+        ];
+      }
+
+      return prev.map(pos => {
+        if (pos.tarjeta_id !== tarjetaId) return pos;
         return {
           ...pos,
           [field]: {
             ...pos[field],
-            [subfield]: parseFloat(value) || 0
+            [subfield]: nextValue
           }
         };
-      }
-      return pos;
-    }));
+      });
+    });
   };
 
   const handleSavePositions = async () => {
@@ -252,6 +269,9 @@ export default function AdminPanel() {
       
       if (response.ok) {
         toast.success('Posiciones guardadas');
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        toast.error(errorData.detail || 'Error al guardar posiciones');
       }
     } catch (error) {
       toast.error('Error al guardar posiciones');
@@ -636,7 +656,7 @@ export default function AdminPanel() {
                           <Input
                             type="number"
                             value={pos.position?.x || 0}
-                            onChange={(e) => handlePositionChange(pos.tarjeta_id, 'position', 'x', e.target.value)}
+                            onChange={(e) => handlePositionChange(pos.tarjeta_id, esp.especialidad_id, 'position', 'x', e.target.value)}
                             className="input-cyber w-24 text-center mx-auto"
                           />
                         </td>
@@ -644,7 +664,7 @@ export default function AdminPanel() {
                           <Input
                             type="number"
                             value={pos.position?.y || 0}
-                            onChange={(e) => handlePositionChange(pos.tarjeta_id, 'position', 'y', e.target.value)}
+                            onChange={(e) => handlePositionChange(pos.tarjeta_id, esp.especialidad_id, 'position', 'y', e.target.value)}
                             className="input-cyber w-24 text-center mx-auto"
                           />
                         </td>
@@ -652,7 +672,7 @@ export default function AdminPanel() {
                           <Input
                             type="number"
                             value={pos.position?.z || 0}
-                            onChange={(e) => handlePositionChange(pos.tarjeta_id, 'position', 'z', e.target.value)}
+                            onChange={(e) => handlePositionChange(pos.tarjeta_id, esp.especialidad_id, 'position', 'z', e.target.value)}
                             className="input-cyber w-24 text-center mx-auto"
                           />
                         </td>

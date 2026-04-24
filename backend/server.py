@@ -48,6 +48,50 @@ async def get_db():
         )
     return db_pool
 
+async def ensure_publications_schema():
+    """Ensure social publication tables/columns exist for older databases."""
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute("SHOW COLUMNS FROM multimedia LIKE 'likes_count'")
+            has_likes_count = await cursor.fetchone()
+            if not has_likes_count:
+                await cursor.execute("ALTER TABLE multimedia ADD COLUMN likes_count INT DEFAULT 0")
+
+            await cursor.execute("SHOW COLUMNS FROM multimedia LIKE 'comments_count'")
+            has_comments_count = await cursor.fetchone()
+            if not has_comments_count:
+                await cursor.execute("ALTER TABLE multimedia ADD COLUMN comments_count INT DEFAULT 0")
+
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS publication_likes (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    multimedia_id VARCHAR(50) NOT NULL,
+                    user_id VARCHAR(50) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (multimedia_id) REFERENCES multimedia(multimedia_id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                    UNIQUE KEY unique_like (multimedia_id, user_id),
+                    INDEX idx_multimedia_id (multimedia_id),
+                    INDEX idx_user_id (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS publication_comments (
+                    comment_id VARCHAR(50) PRIMARY KEY,
+                    multimedia_id VARCHAR(50) NOT NULL,
+                    user_id VARCHAR(50) NOT NULL,
+                    comment_text TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (multimedia_id) REFERENCES multimedia(multimedia_id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                    INDEX idx_multimedia_id (multimedia_id),
+                    INDEX idx_user_id (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
 app = FastAPI(title="Máquina de Programación de Sueños - CECyTE 04")
 
 # Mount multimedia directory for serving uploaded files
@@ -57,6 +101,21 @@ api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def get_cors_origins() -> list[str]:
+    raw = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    if raw.strip() == "*":
+        # Con cookies, el navegador rechaza Access-Control-Allow-Origin: *
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+def should_use_secure_cookies(request: Request) -> bool:
+    configured = os.environ.get("COOKIE_SECURE")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    return request.url.scheme == "https"
 
 ADMIN_CREDENTIALS = {
     "username": os.environ.get("ADMIN_USERNAME", "admin"),
@@ -253,7 +312,16 @@ async def process_session(request: Request, response: Response):
                     (session_id, user_id, session_token, is_admin, expires_at, datetime.now(timezone.utc))
                 )
         
-        response.set_cookie(key="session_token", value=session_token, httponly=True, secure=True, samesite="none", path="/", max_age=7*24*60*60)
+        cookie_secure = should_use_secure_cookies(request)
+        response.set_cookie(
+            key="session_token",
+            value=session_token,
+            httponly=True,
+            secure=cookie_secure,
+            samesite="none" if cookie_secure else "lax",
+            path="/",
+            max_age=7*24*60*60
+        )
         return {"user_id": user_id, "email": session_data["email"], "name": session_data["name"], "picture": session_data.get("picture"), "is_admin": is_admin}
     except HTTPException:
         raise
@@ -282,7 +350,7 @@ async def logout(request: Request, response: Response):
 
 # Admin Auth
 @api_router.post("/admin/login")
-async def admin_login(data: AdminLogin, response: Response):
+async def admin_login(data: AdminLogin, request: Request, response: Response):
     password_hash = hashlib.sha256(data.password.encode()).hexdigest()
     if data.username != ADMIN_CREDENTIALS["username"] or password_hash != ADMIN_CREDENTIALS["password_hash"]:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -305,7 +373,16 @@ async def admin_login(data: AdminLogin, response: Response):
                 (admin_token, data.username, expires_at, datetime.now(timezone.utc))
             )
     
-    response.set_cookie(key="admin_token", value=admin_token, httponly=True, secure=True, samesite="none", path="/", max_age=24*60*60)
+    cookie_secure = should_use_secure_cookies(request)
+    response.set_cookie(
+        key="admin_token",
+        value=admin_token,
+        httponly=True,
+        secure=cookie_secure,
+        samesite="none" if cookie_secure else "lax",
+        path="/",
+        max_age=24*60*60
+    )
     return {"message": "Admin login successful", "is_admin": True}
 
 @api_router.get("/admin/check")
@@ -1117,6 +1194,45 @@ async def update_tarjeta_position(request: Request, data: dict):
                  datetime.now(timezone.utc))
             )
     return {"message": "Position updated"}
+
+@api_router.post("/admin/tarjetas/positions/bulk")
+async def bulk_update_tarjeta_positions(request: Request, data: dict):
+    await require_admin(request)
+    positions = data.get("positions")
+    if not isinstance(positions, list) or not positions:
+        raise HTTPException(status_code=400, detail="positions list required")
+
+    pool = await get_db()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            for item in positions:
+                tarjeta_id = item.get("tarjeta_id")
+                especialidad_id = item.get("especialidad_id")
+                if not tarjeta_id or not especialidad_id:
+                    raise HTTPException(status_code=400, detail="tarjeta_id and especialidad_id are required")
+
+                await cursor.execute(
+                    """INSERT INTO tarjeta_positions (tarjeta_id, especialidad_id, position, rotation, scale, model_id, updated_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       ON DUPLICATE KEY UPDATE
+                       especialidad_id = VALUES(especialidad_id),
+                       position = VALUES(position),
+                       rotation = VALUES(rotation),
+                       scale = VALUES(scale),
+                       model_id = VALUES(model_id),
+                       updated_at = VALUES(updated_at)""",
+                    (
+                        tarjeta_id,
+                        especialidad_id,
+                        json.dumps(item.get("position", {"x": 0, "y": 0, "z": 0})),
+                        json.dumps(item.get("rotation", {"x": 0, "y": 0, "z": 0})),
+                        item.get("scale", 1.0),
+                        item.get("model_id"),
+                        datetime.now(timezone.utc)
+                    )
+                )
+
+    return {"message": "Positions updated", "count": len(positions)}
 
 # Poster Send
 @api_router.post("/poster/send")
@@ -1951,7 +2067,13 @@ async def get_likes_count(cursor, multimedia_id: str) -> int:
     """Helper function to get current likes count"""
     await cursor.execute("SELECT likes_count FROM multimedia WHERE multimedia_id = %s", (multimedia_id,))
     result = await cursor.fetchone()
-    return result['likes_count'] if result else 0
+    if not result:
+        return 0
+    if isinstance(result, dict):
+        return result.get('likes_count', 0)
+    if isinstance(result, (list, tuple)):
+        return result[0] if result else 0
+    return 0
 @api_router.get("/campus/info")
 async def get_campus_info():
     return {
@@ -1980,11 +2102,18 @@ async def health_check():
         return {"status": "unhealthy", "error": str(e)}
 
 app.include_router(api_router)
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=get_cors_origins(),
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 @app.on_event("startup")
 async def startup():
     await get_db()
+    await ensure_publications_schema()
     logger.info("✅ MySQL connection pool initialized")
 
 @app.on_event("shutdown")

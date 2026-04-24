@@ -353,6 +353,7 @@ const getTypeIcon = () => {
                       size="sm"
                       onClick={() => handleToggleVisibility(item.multimedia_id, item.visible)}
                       className="text-white/70 hover:text-white"
+                      title={item.visible ? 'Ocultar publicación' : 'Mostrar publicación'}
                     >
                       {item.visible ? (
                         <Eye className="w-4 h-4" />
@@ -361,12 +362,14 @@ const getTypeIcon = () => {
                       )}
                     </Button>
                     <Button
-                      variant="ghost"
+                      variant="destructive"
                       size="sm"
                       onClick={() => handleDelete(item.multimedia_id)}
-                      className="text-red-400 hover:text-red-300"
+                      className="rounded-lg"
+                      title="Eliminar publicación"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Eliminar
                     </Button>
                   </div>
                 </div>
@@ -380,6 +383,10 @@ const getTypeIcon = () => {
                     ))}
                   </div>
                 )}
+
+                <div className="mt-3 text-xs text-white/35">
+                  Puedes ocultar o eliminar permanentemente esta publicación desde aquí.
+                </div>
               </motion.div>
             ))}
           </div>

@@ -334,7 +334,7 @@ const Avatar3D = React.forwardRef(({ url, startPosition = AVATAR_SPAWN_POSITION 
         const scene = gltf.scene;
 
         // 🔥 escala
-        scene.scale.set(1.5, 1.5, 1.5);
+        scene.scale.set(.5, .5, .5);
 
         // 🔥 crear contenedor para el avatar
         const group = new THREE.Group();
@@ -491,7 +491,7 @@ function Player({
 
     // 🟢 SALTO
     if ((keys.current[' '] || mobileControls?.jump) && !isJumping.current) {
-      velocityY.current = 0.5;
+      velocityY.current = 0.3;
       isJumping.current = true;
     }
 
@@ -531,7 +531,7 @@ function Player({
     }
 
     // 🔒 LIMITES
-    const LIMIT = 60;
+    const LIMIT = 30;
     pos.x = Math.max(-LIMIT, Math.min(LIMIT, pos.x));
     pos.z = Math.max(-LIMIT, Math.min(LIMIT, pos.z));
 
@@ -571,7 +571,7 @@ function Player({
 
   return (
     <>
-      <pointLight ref={lightRef} intensity={2} />
+      <pointLight ref={lightRef} intensity={3.4} distance={22} decay={1.6} color="#f8fbff" />
       <Avatar3D ref={playerRef} url={url} startPosition={startPosition} />
     </>
   );
@@ -820,6 +820,29 @@ const LoadedModel = React.forwardRef(function LoadedModel({ url, onError }, ref)
           const scaleFactor = 30 / maxDim;
           scene.scale.setScalar(scaleFactor);
         }
+
+        // Algunos visores muestran terrenos "bien" porque fuerzan doble cara o son
+        // más tolerantes con materiales/normales. En Three.js una cara puede
+        // desaparecer si el winding/normales del export no viene consistente.
+        scene.traverse((child) => {
+          if (!child.isMesh || !child.geometry) return;
+
+          child.frustumCulled = false;
+          child.geometry.computeBoundingBox();
+          child.geometry.computeBoundingSphere();
+
+          if (!child.geometry.attributes.normal) {
+            child.geometry.computeVertexNormals();
+          }
+
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.forEach((material) => {
+            if (!material) return;
+            material.side = THREE.DoubleSide;
+            material.shadowSide = THREE.DoubleSide;
+            material.needsUpdate = true;
+          });
+        });
         
         loadedObject = scene;
         setModel(scene);
@@ -909,12 +932,20 @@ function Scene({ especialidades, selectedEspecialidad, onSelectEspecialidad, tar
       <color attach="background" args={['#020408']} />
       <fog attach="fog" args={['#020408', 70, 200]} />
       
-      <ambientLight intensity={1.2} />
+      <ambientLight intensity={1.8} color="#f4f8ff" />
+      <hemisphereLight args={['#dbeafe', '#2b3444', 1.5]} />
       <directionalLight 
         position={[10, 15, 10]} 
-        intensity={2}
+        intensity={3.2}
+        color="#fff7ed"
       />
-      <pointLight position={[0, 5, 5]} intensity={2} />
+      <directionalLight
+        position={[-14, 12, -10]}
+        intensity={2.2}
+        color="#dbeafe"
+      />
+      <pointLight position={[0, 10, 0]} intensity={2.8} distance={120} decay={1.5} color="#ffffff" />
+      <pointLight position={[0, 18, 0]} intensity={2.2} distance={140} decay={1.2} color="#cfe7ff" />
       <Stars radius={200} depth={60} count={3000} factor={4} saturation={0} fade speed={1} />
       
       <Ground floorMeshRef={floorMeshRef} />
@@ -1188,7 +1219,12 @@ export default function VirtualTour() {
           <Canvas 
             camera={{ position: [30, 22, 30], fov: 50 }}
             gl={{ antialias: true, alpha: false }}
-            onCreated={() => setModelLoading(false)}
+            onCreated={({ gl }) => {
+              gl.toneMapping = THREE.ACESFilmicToneMapping;
+              gl.toneMappingExposure = 1.4;
+              gl.outputColorSpace = THREE.SRGBColorSpace;
+              setModelLoading(false);
+            }}
           >
             <Suspense fallback={null}>
               <Scene 
