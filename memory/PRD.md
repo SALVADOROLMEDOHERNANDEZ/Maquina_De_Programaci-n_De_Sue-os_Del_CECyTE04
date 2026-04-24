@@ -7,7 +7,7 @@ Aplicación full-stack para CECyTE 04 que permite a los estudiantes explorar car
 - **Frontend:** React, Tailwind CSS, Framer Motion, React Three Fiber
 - **Backend:** FastAPI (Python)
 - **Base de Datos:** MySQL (compatible con phpMyAdmin/Hostinger)
-- **IA:** Google Gemini (texto), Hugging Face (imágenes)
+- **IA:** Google Gemini (texto e imagen)
 
 ## Funcionalidades Implementadas
 

@@ -169,6 +169,59 @@ class CommentRequest(BaseModel):
 class CommentUpdate(BaseModel):
     comment_text: str
 
+
+def build_future_story_prompt(data: SimulationRequest) -> str:
+    intereses = ', '.join(data.intereses) if data.intereses else 'tecnologia'
+    return (
+        f"Eres un narrador inspiracional y profesional. Genera una historia emotiva, "
+        f"creible y visual sobre el futuro de {data.nombre}, estudiante de {data.carrera} "
+        f"en CECyTE 04. Intereses: {intereses}. "
+        "Escribe en espanol, en primera persona, con 300 a 420 palabras. "
+        "La historia debe sentirse aspiracional, concreta y bien redactada, incluyendo "
+        "logros, entorno profesional, crecimiento personal y el impacto positivo de su formacion."
+    )
+
+
+def build_future_image_prompt(data: SimulationRequest) -> str:
+    gender_desc = (
+        "young professional woman"
+        if data.sexo and data.sexo.lower() in ["f", "femenino", "mujer", "female"]
+        else "young professional man"
+    )
+    intereses = ', '.join(data.intereses[:4]) if data.intereses else 'technology'
+    return (
+        f"Create a polished futuristic poster-style portrait of a successful {gender_desc} "
+        f"working in {data.carrera}. Include subtle references to {intereses}. "
+        "Scene: modern optimistic future workspace, cinematic lighting, professional look, "
+        "high detail, educational inspiration, vibrant but elegant colors, clean composition."
+    )
+
+
+async def call_gemini_generate_content(model: str, parts: list[dict], generation_config: Optional[dict] = None) -> dict:
+    api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Google Gemini API key no configurada")
+
+    payload = {
+        "contents": [
+            {
+                "parts": parts
+            }
+        ]
+    }
+    if generation_config:
+        payload["generationConfig"] = generation_config
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    async with httpx.AsyncClient(timeout=90) as client:
+        response = await client.post(
+            url,
+            params={"key": api_key},
+            json=payload
+        )
+    response.raise_for_status()
+    return response.json()
+
 # Helper Functions
 async def get_current_user(request: Request) -> Optional[dict]:
     session_token = request.cookies.get("session_token")
@@ -501,6 +554,24 @@ async def get_admin_statistics(request: Request):
 @api_router.post("/simulation/generate-story")
 async def generate_story(data: SimulationRequest):
     try:
+        response = await call_gemini_generate_content(
+            "gemini-2.5-flash",
+            [{"text": build_future_story_prompt(data)}],
+            {
+                "temperature": 0.9,
+                "topP": 0.95,
+                "maxOutputTokens": 900
+            }
+        )
+        historia = (
+            response.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text")
+        )
+        if not historia:
+            raise ValueError("Gemini no devolvio historia")
+        return {"historia": historia}
         import google.generativeai as genai
         api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
         if not api_key:
@@ -518,22 +589,19 @@ async def generate_story(data: SimulationRequest):
 @api_router.post("/simulation/generate-image")
 async def generate_image(data: SimulationRequest):
     try:
-        from huggingface_hub import InferenceClient
-        from PIL import Image
-        import io
-        
-        api_token = os.environ.get("HUGGINGFACE_API_TOKEN")
-        if not api_token:
-            return {"imagen_base64": None}
-        
-        client = InferenceClient(token=api_token)
-        gender_desc = "mujer joven profesional" if data.sexo and data.sexo.lower() in ["f", "femenino", "mujer", "female"] else "hombre joven profesional"
-        prompt = f"professional portrait of a successful {gender_desc} {data.carrera}, futuristic office, cyberpunk style"
-        
-        image = client.text_to_image(model="stabilityai/stable-diffusion-2-1:cheapest", prompt=prompt, provider="auto")
-        buffered = io.BytesIO()
-        image.save(buffered, format="PNG")
-        return {"imagen_base64": base64.b64encode(buffered.getvalue()).decode('utf-8')}
+        response = await call_gemini_generate_content(
+            "gemini-2.5-flash-image",
+            [{"text": build_future_image_prompt(data)}],
+            {
+                "responseModalities": ["TEXT", "IMAGE"]
+            }
+        )
+        parts = response.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        for part in parts:
+            inline_data = part.get("inlineData")
+            if inline_data and inline_data.get("data"):
+                return {"imagen_base64": inline_data["data"]}
+        return {"imagen_base64": None}
     except Exception as e:
         logger.error(f"Image generation error: {e}")
         return {"imagen_base64": None}
