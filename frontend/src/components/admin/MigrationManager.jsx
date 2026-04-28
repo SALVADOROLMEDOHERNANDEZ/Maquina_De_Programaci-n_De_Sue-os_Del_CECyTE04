@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { AlertCircle, CheckCircle2, Clock, RefreshCw, Code2, Database, Copy, Play } from 'lucide-react';
 import { Button } from '../ui/button';
 
+const API_URL = process.env.REACT_APP_BACKEND_URL;
+
 const MigrationManager = () => {
   // Estados principales
   const [activeTab, setActiveTab] = useState('execute');
@@ -31,7 +33,9 @@ const MigrationManager = () => {
 
   const loadTemplates = async () => {
     try {
-      const response = await fetch('http://localhost:8001/api/admin/migrations/templates');
+      const response = await fetch(`${API_URL}/api/admin/migrations/templates`, {
+        credentials: 'include'
+      });
       const data = await response.json();
       setTemplates(data.templates || {});
     } catch (err) {
@@ -42,7 +46,9 @@ const MigrationManager = () => {
   const loadMigrationHistory = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:8001/api/admin/migrations/history?limit=10');
+      const response = await fetch(`${API_URL}/api/admin/migrations/history?limit=10`, {
+        credentials: 'include'
+      });
       const data = await response.json();
       setMigrations(data.migrations || []);
     } catch (err) {
@@ -66,7 +72,7 @@ const MigrationManager = () => {
 
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:8001/api/admin/migrations/execute', {
+      const response = await fetch(`${API_URL}/api/admin/migrations/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
@@ -102,7 +108,7 @@ const MigrationManager = () => {
   const validateSchema = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:8001/api/admin/migrations/validate', {
+      const response = await fetch(`${API_URL}/api/admin/migrations/validate`, {
         method: 'POST',
         credentials: 'include'
       });

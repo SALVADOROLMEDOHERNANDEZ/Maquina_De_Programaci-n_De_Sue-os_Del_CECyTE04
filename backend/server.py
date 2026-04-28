@@ -2,6 +2,9 @@ from fastapi import FastAPI, APIRouter, HTTPException, Response, Request, Backgr
 from fastapi.responses import JSONResponse, FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 import aiomysql
 import os
@@ -103,6 +106,59 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_trusted_hosts() -> list[str]:
+    raw = os.environ.get("TRUSTED_HOSTS", "*")
+    hosts = [host.strip() for host in raw.split(",") if host.strip()]
+    return hosts or ["*"]
+
+
+def get_hsts_value() -> str:
+    max_age = os.environ.get("HSTS_MAX_AGE", "31536000").strip() or "31536000"
+    include_subdomains = env_flag("HSTS_INCLUDE_SUBDOMAINS", True)
+    preload = env_flag("HSTS_PRELOAD", False)
+
+    value = f"max-age={max_age}"
+    if include_subdomains:
+        value += "; includeSubDomains"
+    if preload:
+        value += "; preload"
+    return value
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        if not env_flag("SECURITY_HEADERS_ENABLED", True):
+            return response
+
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+        )
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https: wss:;"
+        )
+
+        if request.url.scheme == "https" or env_flag("ENFORCE_HTTPS", False):
+            response.headers.setdefault("Strict-Transport-Security", get_hsts_value())
+
+        return response
+
+
 def get_cors_origins() -> list[str]:
     raw = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
     if raw.strip() == "*":
@@ -112,6 +168,8 @@ def get_cors_origins() -> list[str]:
 
 
 def should_use_secure_cookies(request: Request) -> bool:
+    if env_flag("ENFORCE_HTTPS", False):
+        return True
     configured = os.environ.get("COOKIE_SECURE")
     if configured is not None:
         return configured.strip().lower() in {"1", "true", "yes", "on"}
@@ -193,13 +251,52 @@ def build_future_story_prompt(data: SimulationRequest) -> str:
         f"Intereses: {intereses}. Gustos: {gustos}. Pasatiempos: {pasatiempos}. "
         f"Le gustaria aprender: {aprender}. "
         "Responde SOLO con JSON valido con este formato exacto: "
-        '{"historia": "texto", "beneficios_carrera": "texto"}. '
+        '{"historia": "texto", "beneficios_carrera": "texto", "carreras_relacionadas": {"universitarias": ["c1"], "laborales_inmediatas": ["l1"]}}. '
         "La historia debe estar en primera persona, en espanol, de 260 a 380 palabras, "
         "aspiracional y realista. "
         "beneficios_carrera debe explicar de forma clara y motivadora como la carrera elegida "
         "(Programacion o Mantenimiento Industrial) ayudara a la persona en su futuro academico, "
-        "laboral, personal, economico y de impacto social, conectando con sus respuestas."
+        "laboral, personal, economico y de impacto social, conectando con sus respuestas. "
+        "carreras_relacionadas.universitarias debe incluir de 4 a 6 opciones de carreras universitarias. "
+        "carreras_relacionadas.laborales_inmediatas debe incluir de 4 a 6 areas laborales inmediatas."
     )
+
+
+def default_related_careers(carrera: str) -> Dict[str, List[str]]:
+    carrera_normalizada = (carrera or "").strip().lower()
+    if "mantenimiento" in carrera_normalizada:
+        return {
+            "universitarias": [
+                "Ingenieria Mecanica",
+                "Ingenieria Electromecanica",
+                "Ingenieria Industrial",
+                "Mecatronica",
+                "Ingenieria en Automatizacion",
+            ],
+            "laborales_inmediatas": [
+                "Tecnico de mantenimiento de planta",
+                "Tecnico en sistemas hidraulicos y neumaticos",
+                "Tecnico en refrigeracion y aire acondicionado",
+                "Auxiliar de automatizacion industrial",
+                "Supervisor de mantenimiento junior",
+            ]
+        }
+    return {
+        "universitarias": [
+            "Ingenieria en Sistemas Computacionales",
+            "Ingenieria en Software",
+            "Ciencia de Datos",
+            "Ciberseguridad",
+            "Inteligencia Artificial",
+        ],
+        "laborales_inmediatas": [
+            "Desarrollador web junior",
+            "Soporte tecnico TI",
+            "Tester QA junior",
+            "Auxiliar de bases de datos",
+            "Desarrollador movil junior",
+        ]
+    }
 
 
 def build_future_image_prompt(data: SimulationRequest) -> str:
@@ -885,6 +982,20 @@ async def generate_story(data: SimulationRequest):
         payload = json.loads(sanitize_json_text(response["text"]))
         historia = payload.get("historia", "").strip()
         beneficios_carrera = payload.get("beneficios_carrera", "").strip()
+        carreras_relacionadas = payload.get("carreras_relacionadas")
+        if isinstance(carreras_relacionadas, dict):
+            universitarias = carreras_relacionadas.get("universitarias", [])
+            laborales_inmediatas = carreras_relacionadas.get("laborales_inmediatas", [])
+        elif isinstance(carreras_relacionadas, list):
+            # Compatibilidad con formato anterior
+            universitarias = carreras_relacionadas
+            laborales_inmediatas = []
+        else:
+            universitarias = []
+            laborales_inmediatas = []
+
+        universitarias = [str(c).strip() for c in universitarias if str(c).strip()][:6]
+        laborales_inmediatas = [str(c).strip() for c in laborales_inmediatas if str(c).strip()][:6]
         if not historia:
             raise ValueError("La IA no devolvio historia")
         if not beneficios_carrera:
@@ -892,9 +1003,17 @@ async def generate_story(data: SimulationRequest):
                 f"Estudiar {data.carrera} te dara habilidades tecnicas, disciplina y oportunidades "
                 "laborales que impulsaran tu crecimiento profesional y personal."
             )
+        if not universitarias and not laborales_inmediatas:
+            carreras_relacionadas = default_related_careers(data.carrera)
+        else:
+            carreras_relacionadas = {
+                "universitarias": universitarias,
+                "laborales_inmediatas": laborales_inmediatas,
+            }
         return {
             "historia": historia,
             "beneficios_carrera": beneficios_carrera,
+            "carreras_relacionadas": carreras_relacionadas,
             "ai_provider": response["provider"],
             "ai_model": response["model"],
         }
@@ -909,7 +1028,8 @@ async def generate_story(data: SimulationRequest):
             "beneficios_carrera": (
                 f"Estudiar {data.carrera} te ayuda a desarrollar habilidades practicas, pensamiento critico "
                 "y oportunidades reales de empleo y crecimiento, alineadas con lo que te gusta hacer."
-            )
+            ),
+            "carreras_relacionadas": default_related_careers(data.carrera)
         }
 
 @api_router.post("/simulation/generate-image")
@@ -2439,6 +2559,13 @@ async def health_check():
         return {"status": "unhealthy", "error": str(e)}
 
 app.include_router(api_router)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=get_trusted_hosts()
+)
+if env_flag("ENFORCE_HTTPS", False):
+    app.add_middleware(HTTPSRedirectMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

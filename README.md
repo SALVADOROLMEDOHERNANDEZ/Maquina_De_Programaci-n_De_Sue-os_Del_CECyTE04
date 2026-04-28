@@ -61,6 +61,33 @@ yarn start
 
 📖 **Ver guía completa:** [INSTALL.md](INSTALL.md)
 
+## 🔒 Seguridad TLS/SSL (Producción)
+
+Para proteger todo el proyecto en producción:
+
+- Publica frontend y backend solo bajo `https://`.
+- Configura `REACT_APP_BACKEND_URL` apuntando a una URL HTTPS.
+- En backend habilita hardening con variables de entorno:
+
+```bash
+ENFORCE_HTTPS=true
+COOKIE_SECURE=true
+TRUSTED_HOSTS=tu-dominio.com,www.tu-dominio.com
+SECURITY_HEADERS_ENABLED=true
+HSTS_MAX_AGE=31536000
+HSTS_INCLUDE_SUBDOMAINS=true
+HSTS_PRELOAD=false
+CORS_ORIGINS=https://tu-frontend.com
+```
+
+Si ejecutas FastAPI directamente con certificado propio:
+
+```bash
+uvicorn server:app --host 0.0.0.0 --port 8001 --ssl-keyfile ./certs/privkey.pem --ssl-certfile ./certs/fullchain.pem
+```
+
+Recomendado: usar un proxy reverso (Nginx/Caddy/Cloudflare) con TLS moderno (TLS 1.2+ y preferible TLS 1.3) y redirección automática HTTP→HTTPS.
+
 ## 🔐 Acceso Admin
 
 | Método | Credenciales |

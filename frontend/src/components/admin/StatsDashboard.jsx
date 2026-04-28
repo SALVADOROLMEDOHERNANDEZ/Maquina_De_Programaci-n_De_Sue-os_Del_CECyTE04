@@ -130,7 +130,7 @@ export default function StatsDashboard() {
           </div>
           <p className="text-red-300 text-sm">{error}</p>
           <p className="text-red-400/70 text-xs mt-2">
-            Verifica que el backend esté ejecutándose en {process.env.REACT_APP_BACKEND_URL || 'localhost:8001'}
+            Verifica que el backend esté ejecutándose en {process.env.REACT_APP_BACKEND_URL || 'https://tu-backend-seguro'}
           </p>
         </div>
       )}

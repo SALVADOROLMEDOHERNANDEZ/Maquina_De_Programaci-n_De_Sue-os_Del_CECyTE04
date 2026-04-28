@@ -84,14 +84,7 @@ export default function FutureSimulator() {
     le_gustaria_aprender: '',
     carrera: '',
     email: '',
-    telefono: '',
-    ai_config: {
-      provider: '',
-      api_token: '',
-      model: '',
-      image_model: '',
-      base_url: ''
-    }
+    telefono: ''
   });
 
   const totalSteps = 5;
@@ -130,24 +123,12 @@ export default function FutureSimulator() {
     }
   };
 
-  const buildRequestPayload = () => {
-    const { ai_config, ...baseFormData } = formData;
-    const aiConfig = Object.fromEntries(
-      Object.entries(ai_config || {}).filter(([, value]) => value && String(value).trim() !== '')
-    );
-
-    return {
-      ...baseFormData,
-      ...(Object.keys(aiConfig).length > 0 ? { ai_config: aiConfig } : {})
-    };
-  };
-
   const generateFuture = async () => {
     setIsGenerating(true);
     setGenerationStep('Conectando con la IA...');
 
     try {
-      const requestPayload = buildRequestPayload();
+      const requestPayload = formData;
 
       // Generate story
       setGenerationStep('Generando tu historia de exito...');
@@ -203,6 +184,13 @@ export default function FutureSimulator() {
         simulation_id: saveData.simulation_id,
         historia: storyData.historia,
         beneficios_carrera: storyData.beneficios_carrera || '',
+        carreras_relacionadas: (
+          storyData.carreras_relacionadas &&
+          typeof storyData.carreras_relacionadas === 'object' &&
+          !Array.isArray(storyData.carreras_relacionadas)
+        )
+          ? storyData.carreras_relacionadas
+          : { universitarias: [], laborales_inmediatas: [] },
         imagen_base64: imageData.imagen_base64
       });
 
@@ -625,63 +613,6 @@ export default function FutureSimulator() {
                   </div>
                 </div>
 
-                <details className="mb-8 rounded-xl border border-white/10 bg-white/5 p-4">
-                  <summary className="cursor-pointer text-sm font-medium text-[#00f0ff]">
-                    Configuracion avanzada de IA
-                  </summary>
-                  <p className="mt-3 text-sm text-white/50">
-                    Si no llenas estos campos, el sistema usa la IA configurada en el servidor.
-                  </p>
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <div>
-                      <Label className="text-white/70">Proveedor</Label>
-                      <Input
-                        value={formData.ai_config.provider}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, provider: e.target.value } }))}
-                        placeholder="openai, gemini, anthropic, groq..."
-                        className="input-cyber h-12"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-white/70">Modelo de texto</Label>
-                      <Input
-                        value={formData.ai_config.model}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, model: e.target.value } }))}
-                        placeholder="gpt-4.1-mini, gemini-2.5-flash..."
-                        className="input-cyber h-12"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-white/70">Token API</Label>
-                      <Input
-                        type="password"
-                        value={formData.ai_config.api_token}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, api_token: e.target.value } }))}
-                        placeholder="Pega aqui tu token"
-                        className="input-cyber h-12"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-white/70">Modelo de imagen</Label>
-                      <Input
-                        value={formData.ai_config.image_model}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, image_model: e.target.value } }))}
-                        placeholder="gpt-image-1, gemini-2.5-flash-image..."
-                        className="input-cyber h-12"
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <Label className="text-white/70">Base URL opcional</Label>
-                      <Input
-                        value={formData.ai_config.base_url}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, base_url: e.target.value } }))}
-                        placeholder="https://api.openai.com/v1"
-                        className="input-cyber h-12"
-                      />
-                    </div>
-                  </div>
-                </details>
-
                 {/* Summary */}
                 <div className="bg-white/5 rounded-xl p-4 mb-8">
                   <h3 className="text-sm font-medium text-white/50 mb-3">Resumen</h3>
@@ -781,6 +712,44 @@ export default function FutureSimulator() {
                     <p className="text-white/80 leading-relaxed whitespace-pre-line">
                       {result.beneficios_carrera}
                     </p>
+                    {result.carreras_relacionadas && (
+                      <div className="mt-6">
+                        {Array.isArray(result.carreras_relacionadas.universitarias) && result.carreras_relacionadas.universitarias.length > 0 && (
+                          <div className="mb-4">
+                            <h4 className="text-sm uppercase tracking-wide text-[#00f0ff] mb-3">
+                              Carreras universitarias
+                            </h4>
+                            <ul className="grid sm:grid-cols-2 gap-2">
+                              {result.carreras_relacionadas.universitarias.map((item, idx) => (
+                                <li
+                                  key={`uni-${item}-${idx}`}
+                                  className="rounded-lg border border-[#00f0ff]/20 bg-[#00f0ff]/10 px-3 py-2 text-sm text-white/90"
+                                >
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {Array.isArray(result.carreras_relacionadas.laborales_inmediatas) && result.carreras_relacionadas.laborales_inmediatas.length > 0 && (
+                          <div>
+                            <h4 className="text-sm uppercase tracking-wide text-[#ccff00] mb-3">
+                              Areas laborales inmediatas
+                            </h4>
+                            <ul className="grid sm:grid-cols-2 gap-2">
+                              {result.carreras_relacionadas.laborales_inmediatas.map((item, idx) => (
+                                <li
+                                  key={`lab-${item}-${idx}`}
+                                  className="rounded-lg border border-[#ccff00]/20 bg-[#ccff00]/10 px-3 py-2 text-sm text-white/90"
+                                >
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
