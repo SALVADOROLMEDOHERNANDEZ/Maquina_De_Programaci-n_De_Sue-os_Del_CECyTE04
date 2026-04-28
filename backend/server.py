@@ -255,6 +255,29 @@ def infer_provider_from_token(token: Optional[str]) -> Optional[str]:
     return None
 
 
+def infer_provider_from_env_tokens() -> Optional[str]:
+    # Highest priority: universal token if present
+    ai_api_token = os.environ.get("AI_API_TOKEN", "").strip()
+    inferred = infer_provider_from_token(ai_api_token)
+    if inferred:
+        return inferred
+    if ai_api_token:
+        return "openai-compatible"
+
+    # Fallbacks by explicit provider variables
+    if os.environ.get("OPENAI_API_KEY", "").strip():
+        return "openai"
+    if os.environ.get("OPENROUTER_API_KEY", "").strip():
+        return "openrouter"
+    if os.environ.get("GROQ_API_KEY", "").strip():
+        return "groq"
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return "anthropic"
+    if os.environ.get("GOOGLE_GEMINI_API_KEY", "").strip():
+        return "gemini"
+    return None
+
+
 def get_provider_token(provider: str, ai_config: Optional[AIProviderConfig]) -> Optional[str]:
     if ai_config and ai_config.api_token:
         return ai_config.api_token.strip()
@@ -278,7 +301,8 @@ def resolve_ai_config(
     requested_provider = (ai_config.provider.strip().lower() if ai_config and ai_config.provider else "").replace("_", "-")
     inferred_provider = infer_provider_from_token(ai_config.api_token if ai_config else None)
     env_provider = os.environ.get("AI_PROVIDER", "").strip().lower().replace("_", "-")
-    provider = requested_provider or inferred_provider or env_provider or "gemini"
+    env_inferred_provider = infer_provider_from_env_tokens()
+    provider = requested_provider or inferred_provider or env_provider or env_inferred_provider or "gemini"
 
     token = get_provider_token(provider, ai_config)
     if not token:
