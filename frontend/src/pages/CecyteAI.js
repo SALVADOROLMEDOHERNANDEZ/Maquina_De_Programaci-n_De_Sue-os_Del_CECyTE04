@@ -662,9 +662,9 @@ export default function CecyteAI() {
             Únete a los estudiantes de CECyTE 04 que están construyendo la siguiente generación de inteligencia artificial.
           </p>
           <div className="flex flex-wrap justify-center gap-4">
-            <Link to="/cuestionario-vocacional">
+            <Link to="/simulator">
               <Button variant="outline" className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10">
-                Descubre si programación es para ti
+                Simula tu futuro con IA
               </Button>
             </Link>
             <Link to="/especialidades">

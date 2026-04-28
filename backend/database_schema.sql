@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS simulations (
     intereses JSON NOT NULL,
     carrera VARCHAR(100) NOT NULL,
     historia TEXT NOT NULL,
+    beneficios_carrera TEXT DEFAULT NULL,
     imagen_base64 LONGTEXT DEFAULT NULL,
     avatar_config JSON DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -98,6 +99,10 @@ CREATE TABLE IF NOT EXISTS simulations (
     INDEX idx_user_id (user_id),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Migracion segura para instalaciones existentes
+ALTER TABLE simulations
+ADD COLUMN IF NOT EXISTS beneficios_carrera TEXT DEFAULT NULL AFTER historia;
 
 -- ═══════════════════════════════════════════════════════════════
 -- TABLA: models_3d (Modelos 3D del plantel)

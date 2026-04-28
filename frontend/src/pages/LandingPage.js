@@ -11,7 +11,6 @@ import {
   ArrowRight,
   Play,
   Brain,
-  Compass,
   Film
 } from 'lucide-react';
 import Logo from '../assets/Logo/g6.png'; // o logo.svg
@@ -109,15 +108,6 @@ export default function LandingPage() {
           animate={{ opacity: 1, x: 0 }}
           className="flex flex-wrap items-center justify-end gap-3"
         >
-          <Button
-            variant="ghost"
-            onClick={() => navigate('/cuestionario-vocacional')}
-            className="text-white/70 hover:text-white hover:bg-white/5 rounded-full px-4 py-3 text-sm hidden md:inline-flex"
-            data-testid="nav-quiz-btn"
-          >
-            <Compass className="w-4 h-4 mr-2" />
-            Cuestionario
-          </Button>
           <Button
             variant="ghost"
             onClick={() => navigate('/ia-cecyte')}
@@ -254,13 +244,6 @@ export default function LandingPage() {
             delay={0}
           />
           <FeatureCard
-            icon={Compass}
-            title="Cuestionario Vocacional"
-            description="Descubre tu carrera ideal con un test inteligente que analiza tus gustos, habilidades e intereses."
-            color="#ff6b6b"
-            delay={0.05}
-          />
-          <FeatureCard
             icon={MapPin}
             title="Tour Virtual 3D"
             description="Explora el campus en realidad virtual con un avatar personalizado que te guia por cada especialidad."
@@ -313,12 +296,12 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Button
-                onClick={() => navigate('/cuestionario-vocacional')}
+                onClick={() => navigate('/simulator')}
                 className="btn-primary rounded-full px-8 py-6 text-lg flex items-center gap-2"
-                data-testid="cta-quiz-btn"
+                data-testid="cta-simulator-btn"
               >
-                <Compass className="w-5 h-5" />
-                Descubre tu Carrera
+                <Sparkles className="w-5 h-5" />
+                Simula tu Futuro
               </Button>
               <Button
                 onClick={() => navigate('/ia-cecyte')}

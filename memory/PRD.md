@@ -15,11 +15,10 @@ Aplicación full-stack para CECyTE 04 que permite a los estudiantes explorar car
 - **Carreras actuales:** Programación, Mantenimiento Industrial
 - **Carreras eliminadas:** Contabilidad, Enfermería, Electrónica, Administración
 
-### ✅ Cuestionario Vocacional (`/cuestionario-vocacional`)
-- 10 preguntas dinámicas sobre gustos, habilidades e intereses
-- IA (Google Gemini) genera recomendaciones personalizadas
-- Incluye carreras de CECyTE Y opciones externas
-- **Otorga puntos automáticamente** al completar
+### ✅ Simulador de Futuro (`/simulator`)
+- Flujo guiado con datos personales, intereses y cuestionario vocacional integrado
+- IA genera historia de éxito personalizada y beneficios de la carrera elegida
+- Enfoque en carreras CECyTE 04: Programación y Mantenimiento Industrial
 
 ### ✅ Sección IA CECYTE (`/ia-cecyte`)
 - Página con 6 pestañas: Inicio, Ranking, Insignias, Documentación, Contribuir, Desarrolladores
@@ -79,7 +78,6 @@ Aplicación full-stack para CECyTE 04 que permite a los estudiantes explorar car
 │   ├── src/
 │   │   ├── App.js
 │   │   ├── pages/
-│   │   │   ├── CareerQuiz.js     # Cuestionario vocacional
 │   │   │   ├── CecyteAI.js       # IA CECYTE con gamificación
 │   │   │   ├── LandingPage.js
 │   │   │   └── ...

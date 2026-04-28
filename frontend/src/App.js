@@ -1,6 +1,6 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster } from './components/ui/sonner';
 
 // Pages
@@ -11,11 +11,33 @@ import FutureSimulator from './pages/FutureSimulator';
 import VirtualTour from './pages/VirtualTour';
 import Especialidades from './pages/Especialidades';
 import AdminPanel from './pages/AdminPanel';
-import CareerQuiz from './pages/CareerQuiz';
 import CecyteAI from './pages/CecyteAI';
 import Publicaciones from './pages/Publicaciones';
+import ProgramacionHub from './pages/ProgramacionHub';
+import MantenimientoHub from './pages/MantenimientoHub';
 
 import './App.css';
+
+function InstitutionalRoute({ children }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#020408] flex items-center justify-center">
+        <div className="spinner-cyber" />
+      </div>
+    );
+  }
+
+  const email = user?.email?.toLowerCase?.() || '';
+  const isInstitutional = email.endsWith('@cecytlax.edu.mx');
+
+  if (!user || !isInstitutional) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return children;
+}
 
 // Router wrapper to handle auth callback
 function AppRouter() {
@@ -36,9 +58,24 @@ function AppRouter() {
       <Route path="/especialidades" element={<Especialidades />} />
       <Route path="/simulation/:id" element={<FutureSimulator />} />
       <Route path="/admin" element={<AdminPanel />} />
-      <Route path="/cuestionario-vocacional" element={<CareerQuiz />} />
       <Route path="/ia-cecyte" element={<CecyteAI />} />
       <Route path="/publicaciones" element={<Publicaciones />} />
+      <Route
+        path="/especialidades/programacion"
+        element={
+          <InstitutionalRoute>
+            <ProgramacionHub />
+          </InstitutionalRoute>
+        }
+      />
+      <Route
+        path="/especialidades/mantenimiento-industrial"
+        element={
+          <InstitutionalRoute>
+            <MantenimientoHub />
+          </InstitutionalRoute>
+        }
+      />
     </Routes>
   );
 }

@@ -128,16 +128,17 @@ class SimulationRequest(BaseModel):
     nombre: str
     intereses: List[str]
     carrera: str
+    gustos: Optional[List[str]] = None
+    pasatiempos: Optional[List[str]] = None
+    le_gustaria_aprender: Optional[str] = None
     sexo: Optional[str] = None
     email: Optional[EmailStr] = None
     telefono: Optional[str] = None
+    ai_config: Optional["AIProviderConfig"] = None
 
 class AdminLogin(BaseModel):
     username: str
     password: str
-
-class CareerQuizRequest(BaseModel):
-    respuestas: Dict[str, Any]
 
 class SendPosterRequest(BaseModel):
     simulation_id: str
@@ -170,15 +171,34 @@ class CommentUpdate(BaseModel):
     comment_text: str
 
 
+class AIProviderConfig(BaseModel):
+    provider: Optional[str] = None
+    api_token: Optional[str] = None
+    model: Optional[str] = None
+    image_model: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+SimulationRequest.model_rebuild()
+
+
 def build_future_story_prompt(data: SimulationRequest) -> str:
     intereses = ', '.join(data.intereses) if data.intereses else 'tecnologia'
+    gustos = ', '.join(data.gustos) if data.gustos else 'No especificado'
+    pasatiempos = ', '.join(data.pasatiempos) if data.pasatiempos else 'No especificado'
+    aprender = data.le_gustaria_aprender or 'No especificado'
     return (
-        f"Eres un narrador inspiracional y profesional. Genera una historia emotiva, "
-        f"creible y visual sobre el futuro de {data.nombre}, estudiante de {data.carrera} "
-        f"en CECyTE 04. Intereses: {intereses}. "
-        "Escribe en espanol, en primera persona, con 300 a 420 palabras. "
-        "La historia debe sentirse aspiracional, concreta y bien redactada, incluyendo "
-        "logros, entorno profesional, crecimiento personal y el impacto positivo de su formacion."
+        f"Eres un orientador vocacional y narrador inspiracional. "
+        f"Genera contenido para {data.nombre}, estudiante de {data.carrera} en CECyTE 04. "
+        f"Intereses: {intereses}. Gustos: {gustos}. Pasatiempos: {pasatiempos}. "
+        f"Le gustaria aprender: {aprender}. "
+        "Responde SOLO con JSON valido con este formato exacto: "
+        '{"historia": "texto", "beneficios_carrera": "texto"}. '
+        "La historia debe estar en primera persona, en espanol, de 260 a 380 palabras, "
+        "aspiracional y realista. "
+        "beneficios_carrera debe explicar de forma clara y motivadora como la carrera elegida "
+        "(Programacion o Mantenimiento Industrial) ayudara a la persona en su futuro academico, "
+        "laboral, personal, economico y de impacto social, conectando con sus respuestas."
     )
 
 
@@ -197,30 +217,307 @@ def build_future_image_prompt(data: SimulationRequest) -> str:
     )
 
 
-async def call_gemini_generate_content(model: str, parts: list[dict], generation_config: Optional[dict] = None) -> dict:
-    api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Google Gemini API key no configurada")
+DEFAULT_TEXT_MODELS = {
+    "gemini": "gemini-2.5-flash",
+    "openai": "gpt-4.1-mini",
+    "openrouter": "openai/gpt-4.1-mini",
+    "groq": "llama-3.3-70b-versatile",
+    "anthropic": "claude-3-5-sonnet-latest",
+    "openai-compatible": "gpt-4.1-mini",
+}
 
-    payload = {
-        "contents": [
-            {
-                "parts": parts
-            }
-        ]
+DEFAULT_IMAGE_MODELS = {
+    "gemini": "gemini-2.5-flash-image",
+    "openai": "gpt-image-1",
+    "openai-compatible": "gpt-image-1",
+}
+
+DEFAULT_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "groq": "https://api.groq.com/openai/v1",
+}
+
+
+def infer_provider_from_token(token: Optional[str]) -> Optional[str]:
+    if not token:
+        return None
+    if token.startswith("AIza"):
+        return "gemini"
+    if token.startswith("sk-ant-"):
+        return "anthropic"
+    if token.startswith("gsk_"):
+        return "groq"
+    if token.startswith("sk-or-"):
+        return "openrouter"
+    if token.startswith("sk-"):
+        return "openai"
+    return None
+
+
+def get_provider_token(provider: str, ai_config: Optional[AIProviderConfig]) -> Optional[str]:
+    if ai_config and ai_config.api_token:
+        return ai_config.api_token.strip()
+
+    env_tokens = {
+        "gemini": os.environ.get("GOOGLE_GEMINI_API_KEY"),
+        "openai": os.environ.get("OPENAI_API_KEY"),
+        "openrouter": os.environ.get("OPENROUTER_API_KEY"),
+        "groq": os.environ.get("GROQ_API_KEY"),
+        "anthropic": os.environ.get("ANTHROPIC_API_KEY"),
+        "openai-compatible": os.environ.get("AI_API_TOKEN"),
     }
-    if generation_config:
-        payload["generationConfig"] = generation_config
+    return env_tokens.get(provider) or os.environ.get("AI_API_TOKEN")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    async with httpx.AsyncClient(timeout=90) as client:
-        response = await client.post(
-            url,
-            params={"key": api_key},
-            json=payload
+
+def resolve_ai_config(
+    ai_config: Optional[AIProviderConfig],
+    *,
+    need_image_model: bool = False
+) -> dict:
+    requested_provider = (ai_config.provider.strip().lower() if ai_config and ai_config.provider else "").replace("_", "-")
+    inferred_provider = infer_provider_from_token(ai_config.api_token if ai_config else None)
+    env_provider = os.environ.get("AI_PROVIDER", "").strip().lower().replace("_", "-")
+    provider = requested_provider or inferred_provider or env_provider or "gemini"
+
+    token = get_provider_token(provider, ai_config)
+    if not token:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No hay token configurado para el proveedor '{provider}'"
         )
-    response.raise_for_status()
-    return response.json()
+
+    model = None
+    if need_image_model:
+        model = (
+            (ai_config.image_model.strip() if ai_config and ai_config.image_model else None)
+            or (ai_config.model.strip() if ai_config and ai_config.model else None)
+            or os.environ.get("AI_IMAGE_MODEL")
+            or DEFAULT_IMAGE_MODELS.get(provider)
+        )
+    else:
+        model = (
+            (ai_config.model.strip() if ai_config and ai_config.model else None)
+            or os.environ.get("AI_MODEL")
+            or DEFAULT_TEXT_MODELS.get(provider)
+        )
+
+    if not model:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No hay modelo por defecto para el proveedor '{provider}'. Especifica uno manualmente."
+        )
+
+    base_url = (
+        ai_config.base_url.strip().rstrip("/") if ai_config and ai_config.base_url
+        else os.environ.get("AI_BASE_URL", "").strip().rstrip("/")
+    ) or DEFAULT_BASE_URLS.get(provider)
+
+    return {
+        "provider": provider,
+        "token": token,
+        "model": model,
+        "base_url": base_url,
+    }
+
+
+def extract_text_from_openai_message(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        chunks = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") in {"text", "output_text"} and item.get("text"):
+                chunks.append(item["text"])
+        return "\n".join(chunks).strip()
+    return ""
+
+
+def sanitize_json_text(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return cleaned[start:end + 1]
+    return cleaned
+
+
+async def generate_text_with_ai(
+    prompt: str,
+    ai_config: Optional[AIProviderConfig],
+    *,
+    temperature: float = 0.7,
+    max_tokens: int = 900,
+    json_output: bool = False
+) -> dict:
+    resolved = resolve_ai_config(ai_config, need_image_model=False)
+    provider = resolved["provider"]
+    model = resolved["model"]
+    token = resolved["token"]
+
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            if provider == "gemini":
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "temperature": temperature,
+                        "maxOutputTokens": max_tokens,
+                    }
+                }
+                if json_output:
+                    payload["generationConfig"]["responseMimeType"] = "application/json"
+
+                response = await client.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    params={"key": token},
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+                text = (
+                    data.get("candidates", [{}])[0]
+                    .get("content", {})
+                    .get("parts", [{}])[0]
+                    .get("text", "")
+                    .strip()
+                )
+            elif provider in {"openai", "openrouter", "groq", "openai-compatible"}:
+                if not resolved["base_url"]:
+                    raise HTTPException(status_code=400, detail="Falta base_url para proveedor OpenAI-compatible")
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if json_output:
+                    payload["response_format"] = {"type": "json_object"}
+
+                response = await client.post(
+                    f"{resolved['base_url']}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+                text = extract_text_from_openai_message(
+                    data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                )
+            elif provider == "anthropic":
+                response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": token,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "messages": [{"role": "user", "content": prompt}],
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                text = "\n".join(
+                    block.get("text", "")
+                    for block in data.get("content", [])
+                    if block.get("type") == "text"
+                ).strip()
+            else:
+                raise HTTPException(status_code=400, detail=f"Proveedor de IA no soportado: {provider}")
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:400] if exc.response is not None else str(exc)
+        logger.error(f"AI provider HTTP error ({provider}): {detail}")
+        raise HTTPException(status_code=502, detail=f"Error del proveedor de IA: {detail}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"AI provider error ({provider}): {exc}")
+        raise HTTPException(status_code=500, detail=f"No se pudo generar texto con {provider}")
+
+    if not text:
+        raise HTTPException(status_code=502, detail=f"{provider} no devolvio contenido de texto")
+
+    return {"text": text, "provider": provider, "model": model}
+
+
+async def generate_image_with_ai(prompt: str, ai_config: Optional[AIProviderConfig]) -> dict:
+    resolved = resolve_ai_config(ai_config, need_image_model=True)
+    provider = resolved["provider"]
+    model = resolved["model"]
+    token = resolved["token"]
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            if provider == "gemini":
+                response = await client.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    params={"key": token},
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {
+                            "responseModalities": ["TEXT", "IMAGE"]
+                        }
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                for part in parts:
+                    inline_data = part.get("inlineData")
+                    if inline_data and inline_data.get("data"):
+                        return {"image_base64": inline_data["data"], "provider": provider, "model": model}
+                return {"image_base64": None, "provider": provider, "model": model}
+
+            if provider in {"openai", "openai-compatible"}:
+                if not resolved["base_url"]:
+                    raise HTTPException(status_code=400, detail="Falta base_url para generar imagen")
+                response = await client.post(
+                    f"{resolved['base_url']}/images/generations",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "size": "1024x1024",
+                        "response_format": "b64_json",
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                return {
+                    "image_base64": data.get("data", [{}])[0].get("b64_json"),
+                    "provider": provider,
+                    "model": model,
+                }
+
+            logger.info(f"Image generation is not supported for provider '{provider}'")
+            return {"image_base64": None, "provider": provider, "model": model}
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:400] if exc.response is not None else str(exc)
+        logger.error(f"Image provider HTTP error ({provider}): {detail}")
+        return {"image_base64": None, "provider": provider, "model": model}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Image provider error ({provider}): {exc}")
+        return {"image_base64": None, "provider": provider, "model": model}
 
 # Helper Functions
 async def get_current_user(request: Request) -> Optional[dict]:
@@ -554,54 +851,52 @@ async def get_admin_statistics(request: Request):
 @api_router.post("/simulation/generate-story")
 async def generate_story(data: SimulationRequest):
     try:
-        response = await call_gemini_generate_content(
-            "gemini-2.5-flash",
-            [{"text": build_future_story_prompt(data)}],
-            {
-                "temperature": 0.9,
-                "topP": 0.95,
-                "maxOutputTokens": 900
-            }
+        response = await generate_text_with_ai(
+            build_future_story_prompt(data),
+            data.ai_config,
+            temperature=0.8,
+            max_tokens=1300,
+            json_output=True
         )
-        historia = (
-            response.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text")
-        )
+        payload = json.loads(sanitize_json_text(response["text"]))
+        historia = payload.get("historia", "").strip()
+        beneficios_carrera = payload.get("beneficios_carrera", "").strip()
         if not historia:
-            raise ValueError("Gemini no devolvio historia")
-        return {"historia": historia}
-        import google.generativeai as genai
-        api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="Google Gemini API key no configurada")
-        
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        prompt = f"""Eres un narrador inspiracional. Genera una historia emotiva sobre el futuro de {data.nombre}, estudiante de {data.carrera} en CECyTE 04. Intereses: {', '.join(data.intereses)}. La historia debe estar en español, 250-350 palabras, en primera persona."""
-        response = model.generate_content(prompt)
-        return {"historia": response.text}
+            raise ValueError("La IA no devolvio historia")
+        if not beneficios_carrera:
+            beneficios_carrera = (
+                f"Estudiar {data.carrera} te dara habilidades tecnicas, disciplina y oportunidades "
+                "laborales que impulsaran tu crecimiento profesional y personal."
+            )
+        return {
+            "historia": historia,
+            "beneficios_carrera": beneficios_carrera,
+            "ai_provider": response["provider"],
+            "ai_model": response["model"],
+        }
     except Exception as e:
         logger.error(f"Story generation error: {e}")
-        return {"historia": f"Me llamo {data.nombre} y recuerdo el día que entré a CECyTE 04 para estudiar {data.carrera}. Mis intereses en {data.intereses[0] if data.intereses else 'tecnología'} me llevaron a esta institución. Hoy trabajo en lo que siempre soñé gracias a mi formación en CECyTE 04."}
+        return {
+            "historia": (
+                f"Me llamo {data.nombre} y recuerdo el dia que entre a CECyTE 04 para estudiar {data.carrera}. "
+                f"Mis intereses en {data.intereses[0] if data.intereses else 'tecnologia'} me llevaron a esta institucion. "
+                "Hoy trabajo en lo que siempre sone gracias a mi formacion en CECyTE 04."
+            ),
+            "beneficios_carrera": (
+                f"Estudiar {data.carrera} te ayuda a desarrollar habilidades practicas, pensamiento critico "
+                "y oportunidades reales de empleo y crecimiento, alineadas con lo que te gusta hacer."
+            )
+        }
 
 @api_router.post("/simulation/generate-image")
 async def generate_image(data: SimulationRequest):
     try:
-        response = await call_gemini_generate_content(
-            "gemini-2.5-flash-image",
-            [{"text": build_future_image_prompt(data)}],
-            {
-                "responseModalities": ["TEXT", "IMAGE"]
-            }
-        )
-        parts = response.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        for part in parts:
-            inline_data = part.get("inlineData")
-            if inline_data and inline_data.get("data"):
-                return {"imagen_base64": inline_data["data"]}
-        return {"imagen_base64": None}
+        response = await generate_image_with_ai(build_future_image_prompt(data), data.ai_config)
+        return {
+            "imagen_base64": response["image_base64"],
+            "ai_provider": response["provider"],
+            "ai_model": response["model"],
+        }
     except Exception as e:
         logger.error(f"Image generation error: {e}")
         return {"imagen_base64": None}
@@ -622,11 +917,12 @@ async def save_simulation(request: Request, data: dict):
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute(
-                    """INSERT INTO simulations (simulation_id, user_id, nombre, sexo, intereses, carrera, historia, imagen_base64, avatar_config, created_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    """INSERT INTO simulations (simulation_id, user_id, nombre, sexo, intereses, carrera, historia, beneficios_carrera, imagen_base64, avatar_config, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (simulation_id, user_id, data.get("nombre"), data.get("sexo"),
                      json.dumps(data.get("intereses", [])), data.get("carrera"),
-                     data.get("historia"), data.get("imagen_base64"),
+                     data.get("historia"), data.get("beneficios_carrera"),
+                     data.get("imagen_base64"),
                      json.dumps(avatar_config), datetime.now(timezone.utc))
                 )
         
@@ -691,57 +987,6 @@ async def get_especialidad(especialidad_id: str):
             especialidad['campo_laboral'] = json.loads(especialidad['campo_laboral']) if especialidad.get('campo_laboral') else []
             especialidad['posicion_3d'] = json.loads(especialidad['posicion_3d']) if especialidad.get('posicion_3d') else {"x": 0, "y": 0, "z": 0}
             return dict(especialidad)
-
-# Career Quiz - NUEVO
-@api_router.post("/career-quiz/recommend")
-async def recommend_career(request: Request, data: CareerQuizRequest):
-    session_id = str(uuid.uuid4())
-    user = await get_current_user(request)
-    user_id = user["user_id"] if user else None
-    
-    try:
-        import google.generativeai as genai
-        api_key = os.environ.get("GOOGLE_GEMINI_API_KEY")
-        if not api_key:
-            resultado = {
-                "recomendaciones": [
-                    {"carrera": "Programación", "compatibilidad": 85, "descripcion": "Ideal para ti.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True},
-                    {"carrera": "Mantenimiento Industrial", "compatibilidad": 75, "descripcion": "Gran opción.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True}
-                ],
-                "mensaje": "Recomendaciones sin IA"
-            }
-            # Award points even without AI
-            await award_quiz_points(user_id, session_id, data.respuestas, resultado)
-            return resultado
-        
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        respuestas_texto = json.dumps(data.respuestas, ensure_ascii=False)
-        
-        prompt = f"""Analiza estas respuestas y recomienda carreras. Respuestas: {respuestas_texto}
-        
-Carreras en CECyTE 04: Programación, Mantenimiento Industrial
-También incluye opciones externas.
-
-Responde SOLO con JSON válido:
-{{"recomendaciones": [{{"carrera": "Nombre", "compatibilidad": 85, "descripcion": "Por qué", "donde_estudiar": ["Lugar"], "es_cecyte": true}}], "analisis": "Perfil", "fortalezas": ["F1", "F2"]}}"""
-        
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-        if text.startswith("```json"): text = text[7:]
-        if text.startswith("```"): text = text[3:]
-        if text.endswith("```"): text = text[:-3]
-        resultado = json.loads(text)
-        
-        # Award points for completing quiz
-        await award_quiz_points(user_id, session_id, data.respuestas, resultado)
-        
-        return resultado
-    except Exception as e:
-        logger.error(f"Career recommendation error: {e}")
-        resultado = {"recomendaciones": [{"carrera": "Programación", "compatibilidad": 80, "descripcion": "Carrera versátil.", "donde_estudiar": ["CECyTE 04"], "es_cecyte": True}]}
-        await award_quiz_points(user_id, session_id, data.respuestas, resultado)
-        return resultado
 
 # CECYTE AI Project - NUEVO
 @api_router.get("/ia-cecyte/info")

@@ -1,4 +1,4 @@
-import React, { useState, Suspense } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
@@ -18,8 +18,7 @@ import {
   Mail,
   Share2,
   Check,
-  MapPin,
-  Image
+  MapPin
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -34,6 +33,16 @@ const INTERESES = [
   'Tecnologia', 'Ciencias', 'Arte', 'Deportes', 'Musica',
   'Videojuegos', 'Matematicas', 'Negocios', 'Salud', 'Robotica',
   'Programacion', 'Diseno', 'Redes Sociales', 'Medio Ambiente'
+];
+
+const CUESTIONARIO_GUSTOS = [
+  'Resolver problemas', 'Crear apps o sistemas', 'Reparar maquinaria',
+  'Trabajar con herramientas', 'Disenar soluciones', 'Aprender nuevas tecnologias'
+];
+
+const CUESTIONARIO_PASATIEMPOS = [
+  'Videojuegos', 'Electronica', 'Proyectos DIY', 'Lectura tecnica',
+  'Deporte', 'Contenido digital', 'Robotica'
 ];
 
 // Animated Background
@@ -70,12 +79,22 @@ export default function FutureSimulator() {
     nombre: '',
     sexo: '',
     intereses: [],
+    gustos: [],
+    pasatiempos: [],
+    le_gustaria_aprender: '',
     carrera: '',
     email: '',
-    telefono: ''
+    telefono: '',
+    ai_config: {
+      provider: '',
+      api_token: '',
+      model: '',
+      image_model: '',
+      base_url: ''
+    }
   });
 
-  const totalSteps = 4;
+  const totalSteps = 5;
   const progress = (step / totalSteps) * 100;
 
   const handleInteresToggle = (interes) => {
@@ -87,6 +106,15 @@ export default function FutureSimulator() {
     }));
   };
 
+  const handleArrayToggle = (field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [field]: prev[field].includes(value)
+        ? prev[field].filter(item => item !== value)
+        : [...prev[field], value]
+    }));
+  };
+
   const canProceed = () => {
     switch (step) {
       case 1:
@@ -94,10 +122,24 @@ export default function FutureSimulator() {
       case 2:
         return formData.intereses.length >= 2;
       case 3:
+        return formData.gustos.length >= 1 && formData.pasatiempos.length >= 1 && formData.le_gustaria_aprender.trim().length >= 6;
+      case 4:
         return formData.carrera !== '';
       default:
         return true;
     }
+  };
+
+  const buildRequestPayload = () => {
+    const { ai_config, ...baseFormData } = formData;
+    const aiConfig = Object.fromEntries(
+      Object.entries(ai_config || {}).filter(([, value]) => value && String(value).trim() !== '')
+    );
+
+    return {
+      ...baseFormData,
+      ...(Object.keys(aiConfig).length > 0 ? { ai_config: aiConfig } : {})
+    };
   };
 
   const generateFuture = async () => {
@@ -105,13 +147,15 @@ export default function FutureSimulator() {
     setGenerationStep('Conectando con la IA...');
 
     try {
+      const requestPayload = buildRequestPayload();
+
       // Generate story
       setGenerationStep('Generando tu historia de exito...');
       const storyResponse = await fetch(`${API_URL}/api/simulation/generate-story`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(formData)
+        body: JSON.stringify(requestPayload)
       });
 
       if (!storyResponse.ok) {
@@ -129,7 +173,7 @@ export default function FutureSimulator() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify(formData)
+          body: JSON.stringify(requestPayload)
         });
 
         if (imageResponse.ok) {
@@ -146,8 +190,9 @@ export default function FutureSimulator() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          ...formData,
+          ...requestPayload,
           historia: storyData.historia,
+          beneficios_carrera: storyData.beneficios_carrera || '',
           imagen_base64: imageData.imagen_base64
         })
       });
@@ -157,10 +202,11 @@ export default function FutureSimulator() {
       setResult({
         simulation_id: saveData.simulation_id,
         historia: storyData.historia,
+        beneficios_carrera: storyData.beneficios_carrera || '',
         imagen_base64: imageData.imagen_base64
       });
 
-      setStep(5);
+      setStep(6);
 
     } catch (error) {
       console.error('Generation error:', error);
@@ -233,7 +279,7 @@ export default function FutureSimulator() {
       {/* Main Content */}
       <main className="relative z-10 container-cyber py-8">
         {/* Progress Bar */}
-        {step <= 4 && (
+        {step <= 5 && (
           <div className="max-w-2xl mx-auto mb-8">
             <div className="flex items-center justify-between text-sm text-white/50 mb-2">
               <span>Paso {step} de {totalSteps}</span>
@@ -378,10 +424,101 @@ export default function FutureSimulator() {
               </motion.div>
             )}
 
-            {/* Step 3: Career */}
+            {/* Step 3: Questionnaire */}
             {step === 3 && (
               <motion.div
                 key="step3"
+                initial={{ opacity: 0, x: 50 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -50 }}
+                className="glass-card rounded-2xl p-8"
+              >
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-12 h-12 rounded-xl bg-[#7c3aed]/10 border border-[#7c3aed]/30 flex items-center justify-center">
+                    <GraduationCap className="w-6 h-6 text-[#7c3aed]" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-['Syne'] font-bold">Cuestionario personal</h2>
+                    <p className="text-white/50 text-sm">Cuéntanos tus gustos, pasatiempos y que quieres aprender</p>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div>
+                    <Label className="text-white/70 mb-2 block">Que te gusta hacer? (elige al menos 1)</Label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {CUESTIONARIO_GUSTOS.map((gusto) => (
+                        <button
+                          key={gusto}
+                          type="button"
+                          onClick={() => handleArrayToggle('gustos', gusto)}
+                          className={`p-3 rounded-xl border text-sm text-left transition-all ${
+                            formData.gustos.includes(gusto)
+                              ? 'bg-[#7c3aed]/10 border-[#7c3aed] text-[#d8b4fe]'
+                              : 'bg-white/5 border-white/10 text-white/70 hover:border-white/30'
+                          }`}
+                        >
+                          {gusto}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-white/70 mb-2 block">Tus pasatiempos favoritos (elige al menos 1)</Label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {CUESTIONARIO_PASATIEMPOS.map((pasatiempo) => (
+                        <button
+                          key={pasatiempo}
+                          type="button"
+                          onClick={() => handleArrayToggle('pasatiempos', pasatiempo)}
+                          className={`p-3 rounded-xl border text-sm text-left transition-all ${
+                            formData.pasatiempos.includes(pasatiempo)
+                              ? 'bg-[#00f0ff]/10 border-[#00f0ff] text-[#67e8f9]'
+                              : 'bg-white/5 border-white/10 text-white/70 hover:border-white/30'
+                          }`}
+                        >
+                          {pasatiempo}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="aprender" className="text-white/70">Que te gustaria estudiar o aprender?</Label>
+                    <Input
+                      id="aprender"
+                      value={formData.le_gustaria_aprender}
+                      onChange={(e) => setFormData(prev => ({ ...prev, le_gustaria_aprender: e.target.value }))}
+                      placeholder="Ej: programacion web, automatizacion, robotica, redes..."
+                      className="input-cyber h-12"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-between mt-8">
+                  <Button
+                    variant="ghost"
+                    onClick={() => setStep(2)}
+                    className="text-white/70"
+                  >
+                    <ArrowLeft className="w-5 h-5 mr-2" /> Atras
+                  </Button>
+                  <Button
+                    onClick={() => setStep(4)}
+                    disabled={!canProceed()}
+                    className="btn-primary rounded-full px-8 py-6"
+                  >
+                    Siguiente <ArrowRight className="w-5 h-5 ml-2" />
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Step 4: Career */}
+            {step === 4 && (
+              <motion.div
+                key="step4"
                 initial={{ opacity: 0, x: 50 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -50 }}
@@ -425,13 +562,13 @@ export default function FutureSimulator() {
                 <div className="flex justify-between mt-8">
                   <Button
                     variant="ghost"
-                    onClick={() => setStep(2)}
+                    onClick={() => setStep(3)}
                     className="text-white/70"
                   >
                     <ArrowLeft className="w-5 h-5 mr-2" /> Atras
                   </Button>
                   <Button
-                    onClick={() => setStep(4)}
+                    onClick={() => setStep(5)}
                     disabled={!canProceed()}
                     className="btn-primary rounded-full px-8 py-6"
                     data-testid="simulator-next-btn-3"
@@ -442,10 +579,10 @@ export default function FutureSimulator() {
               </motion.div>
             )}
 
-            {/* Step 4: Contact & Generate */}
-            {step === 4 && !isGenerating && (
+            {/* Step 5: Contact & Generate */}
+            {step === 5 && !isGenerating && (
               <motion.div
-                key="step4"
+                key="step5"
                 initial={{ opacity: 0, x: 50 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -50 }}
@@ -488,6 +625,63 @@ export default function FutureSimulator() {
                   </div>
                 </div>
 
+                <details className="mb-8 rounded-xl border border-white/10 bg-white/5 p-4">
+                  <summary className="cursor-pointer text-sm font-medium text-[#00f0ff]">
+                    Configuracion avanzada de IA
+                  </summary>
+                  <p className="mt-3 text-sm text-white/50">
+                    Si no llenas estos campos, el sistema usa la IA configurada en el servidor.
+                  </p>
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div>
+                      <Label className="text-white/70">Proveedor</Label>
+                      <Input
+                        value={formData.ai_config.provider}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, provider: e.target.value } }))}
+                        placeholder="openai, gemini, anthropic, groq..."
+                        className="input-cyber h-12"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-white/70">Modelo de texto</Label>
+                      <Input
+                        value={formData.ai_config.model}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, model: e.target.value } }))}
+                        placeholder="gpt-4.1-mini, gemini-2.5-flash..."
+                        className="input-cyber h-12"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-white/70">Token API</Label>
+                      <Input
+                        type="password"
+                        value={formData.ai_config.api_token}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, api_token: e.target.value } }))}
+                        placeholder="Pega aqui tu token"
+                        className="input-cyber h-12"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-white/70">Modelo de imagen</Label>
+                      <Input
+                        value={formData.ai_config.image_model}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, image_model: e.target.value } }))}
+                        placeholder="gpt-image-1, gemini-2.5-flash-image..."
+                        className="input-cyber h-12"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <Label className="text-white/70">Base URL opcional</Label>
+                      <Input
+                        value={formData.ai_config.base_url}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ai_config: { ...prev.ai_config, base_url: e.target.value } }))}
+                        placeholder="https://api.openai.com/v1"
+                        className="input-cyber h-12"
+                      />
+                    </div>
+                  </div>
+                </details>
+
                 {/* Summary */}
                 <div className="bg-white/5 rounded-xl p-4 mb-8">
                   <h3 className="text-sm font-medium text-white/50 mb-3">Resumen</h3>
@@ -495,13 +689,16 @@ export default function FutureSimulator() {
                     <p><span className="text-white/50">Nombre:</span> <span className="text-white">{formData.nombre}</span></p>
                     <p><span className="text-white/50">Carrera:</span> <span className="text-[#7c3aed]">{formData.carrera}</span></p>
                     <p><span className="text-white/50">Intereses:</span> <span className="text-[#00f0ff]">{formData.intereses.join(', ')}</span></p>
+                    <p><span className="text-white/50">Gustos:</span> <span className="text-[#d8b4fe]">{formData.gustos.join(', ')}</span></p>
+                    <p><span className="text-white/50">Pasatiempos:</span> <span className="text-[#67e8f9]">{formData.pasatiempos.join(', ')}</span></p>
+                    <p><span className="text-white/50">Quiere aprender:</span> <span className="text-white/80">{formData.le_gustaria_aprender}</span></p>
                   </div>
                 </div>
 
                 <div className="flex justify-between">
                   <Button
                     variant="ghost"
-                    onClick={() => setStep(3)}
+                    onClick={() => setStep(4)}
                     className="text-white/70"
                   >
                     <ArrowLeft className="w-5 h-5 mr-2" /> Atras
@@ -536,10 +733,10 @@ export default function FutureSimulator() {
               </motion.div>
             )}
 
-            {/* Step 5: Result */}
-            {step === 5 && result && (
+            {/* Step 6: Result */}
+            {step === 6 && result && (
               <motion.div
-                key="step5"
+                key="step6"
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="space-y-6"
@@ -575,6 +772,17 @@ export default function FutureSimulator() {
                     {result.historia}
                   </p>
                 </div>
+
+                {result.beneficios_carrera && (
+                  <div className="glass-card rounded-2xl p-8">
+                    <h3 className="text-xl font-['Syne'] font-bold mb-4 text-[#ccff00]">
+                      Lo que te ayudara la carrera que elegiste
+                    </h3>
+                    <p className="text-white/80 leading-relaxed whitespace-pre-line">
+                      {result.beneficios_carrera}
+                    </p>
+                  </div>
+                )}
 
                 {/* Actions */}
                 <div className="glass-card rounded-2xl p-6">

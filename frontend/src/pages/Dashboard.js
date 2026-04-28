@@ -15,7 +15,9 @@ import {
   Image,
   Clock,
   Shield,
-  Film
+  Film,
+  BookOpen,
+  Wrench
 } from 'lucide-react';
 import Logo from '../assets/Logo/g6.png'; // o logo.svg
 
@@ -67,6 +69,8 @@ export default function Dashboard() {
   const { user, logout, loading, checkAuth } = useAuth();
   const [simulations, setSimulations] = useState([]);
   const [loadingSimulations, setLoadingSimulations] = useState(true);
+  const institutionalEmail = user?.email?.toLowerCase?.().trim() || '';
+  const isInstitutional = institutionalEmail.endsWith('@cecytlax.edu.mx');
 
   useEffect(() => {
     // If user was passed from AuthCallback, use it
@@ -271,6 +275,65 @@ export default function Dashboard() {
             </div>
           </motion.div>
         </div>
+
+        {isInstitutional && (
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.45 }}
+            className="mb-12"
+          >
+            <div className="glass-card rounded-3xl p-6 md:p-8 border border-[#00f0ff]/20">
+              <div className="flex items-center justify-between flex-wrap gap-4 mb-6">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[#00f0ff]/80">
+                    Acceso Institucional
+                  </p>
+                  <h2 className="text-2xl font-['Syne'] font-bold text-white mt-1">
+                    Centros de apoyo por especialidad
+                  </h2>
+                  <p className="text-white/50 text-sm mt-2">
+                    Recursos adicionales exclusivos para alumnos con correo institucional.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-5">
+                <button
+                  onClick={() => navigate('/especialidades/programacion')}
+                  className="group text-left rounded-2xl p-5 border border-[#7c3aed]/35 bg-[#7c3aed]/10 hover:bg-[#7c3aed]/20 transition-all backdrop-blur-xl"
+                >
+                  <div className="w-12 h-12 rounded-xl bg-[#7c3aed]/20 border border-[#7c3aed]/40 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <BookOpen className="w-6 h-6 text-[#d8b4fe]" />
+                  </div>
+                  <h3 className="text-lg font-['Syne'] font-bold text-white">Programacion</h3>
+                  <p className="text-sm text-white/70 mt-2">
+                    Videos de YouTube, rutas de aprendizaje y apoyo para temas dificiles.
+                  </p>
+                  <div className="mt-4 flex items-center gap-2 text-[#d8b4fe] text-sm font-medium">
+                    Abrir centro <ArrowRight className="w-4 h-4" />
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => navigate('/especialidades/mantenimiento-industrial')}
+                  className="group text-left rounded-2xl p-5 border border-[#00f0ff]/35 bg-[#00f0ff]/10 hover:bg-[#00f0ff]/20 transition-all backdrop-blur-xl"
+                >
+                  <div className="w-12 h-12 rounded-xl bg-[#00f0ff]/20 border border-[#00f0ff]/40 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <Wrench className="w-6 h-6 text-[#67e8f9]" />
+                  </div>
+                  <h3 className="text-lg font-['Syne'] font-bold text-white">Mantenimiento Industrial</h3>
+                  <p className="text-sm text-white/70 mt-2">
+                    Espacio dedicado con contenidos de practica, seguridad y procesos.
+                  </p>
+                  <div className="mt-4 flex items-center gap-2 text-[#67e8f9] text-sm font-medium">
+                    Abrir centro <ArrowRight className="w-4 h-4" />
+                  </div>
+                </button>
+              </div>
+            </div>
+          </motion.section>
+        )}
 
         {/* Recent Simulations */}
         <motion.div

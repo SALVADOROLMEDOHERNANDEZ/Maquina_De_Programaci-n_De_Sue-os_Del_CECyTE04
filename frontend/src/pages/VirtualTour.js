@@ -491,7 +491,7 @@ function Player({
 
     // 🟢 SALTO
     if ((keys.current[' '] || mobileControls?.jump) && !isJumping.current) {
-      velocityY.current = 0.3;
+      velocityY.current = 0.13;
       isJumping.current = true;
     }
 
@@ -638,13 +638,13 @@ function CameraFollow({ target, viewMode = 'third-person' }) {
 
     if (viewMode === 'first-person') {
       // 🎮 VISTA 1ERA PERSONA: cámara real humana
-      const eyeHeight = 1.6;
+      const eyeHeight = .5;
       
       // Cámara en la cabeza del avatar
       camera.position.copy(pos).add(new THREE.Vector3(0, eyeHeight, 0));
       
       // La cámara mira en la DIRECCIÓN del avatar
-      const forward = new THREE.Vector3(0, 0, -1);
+      const forward = new THREE.Vector3(0, 0, 1);
       forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), target.current.rotation.y);
       const lookTarget = camera.position.clone().add(forward.multiplyScalar(10));
       camera.lookAt(lookTarget);
@@ -661,7 +661,7 @@ function CameraFollow({ target, viewMode = 'third-person' }) {
       
       camera.position.set(
         pos.x + x * distance,
-        pos.y + 3 + y * distance,
+        pos.y +1 + y * distance,
         pos.z + z * distance
       );
       
@@ -670,7 +670,7 @@ function CameraFollow({ target, viewMode = 'third-person' }) {
     } else {
       // 🎮 VISTA 3ERA PERSONA (por defecto)
       camera.position.lerp(
-        new THREE.Vector3(pos.x + 10, pos.y + 8, pos.z + 10),
+        new THREE.Vector3(pos.x + 4, pos.y + 6, pos.z + 10),
         0.1
       );
       camera.lookAt(pos);
